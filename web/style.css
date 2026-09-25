@@ -248,6 +248,9 @@ body.chat-open #inspector { width: 440px; }
 .exp-group button:hover { border-color: rgba(255, 255, 255, 0.4); background: #222938; }
 .exp-group button:active { background: var(--accent); color: var(--accent-ink); }
 #demo { border-color: #ffc85788; color: var(--accent); font-weight: 600; }
+.exp-group button[data-body] { color: var(--faint); }
+.exp-group button[data-body].on { border-color: #3fae66; color: #9ff0bb; background: #16301f; }
+.exp-group button[data-body]:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .decision {
   position: absolute; top: 10px; right: 10px; width: min(250px, 42%); max-height: calc(100% - 110px); overflow-y: auto;

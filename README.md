@@ -8,10 +8,16 @@ that can teach it new movements.
   2026). Every neuron sits at its real position: the brain on top, the ventral nerve cord (the fly's
   spinal cord) below. It includes the ~800 motor neurons that drive the legs, wings, neck and
   proboscis, each annotated with the muscle it innervates.
-- **The body** is a 3D fly on a floating ball, like a fly in a neuroscience rig. Its joints move only
-  when their motor neurons fire: motor neurons → muscles → joints. Show it a threat and the giant
-  fibre fires its jump muscle; touch sugar to its mouth and MN9 extends the proboscis. For every
-  behaviour you get the pathway that caused it, traced neuron by neuron and lit up in 3D.
+- **The body** is a physical 3D fly (NeuroMechFly, simulated with MuJoCo) held over a floating ball,
+  like a fly in a neuroscience rig. Its joints move only when their motor neurons fire: motor neurons
+  → muscles → joints, with gravity, contacts and friction doing the rest. The legs' sense organs
+  report back into the nerve cord every frame, so the brain feels what its body did. Show it a
+  threat and the giant fibre fires its jump muscle; touch sugar to its mouth and MN9 extends the
+  proboscis. For every behaviour you get the pathway that caused it, traced neuron by neuron and lit
+  up in 3D.
+- **A scoring suite** runs the experiments that were done on real flies (activate the moonwalker
+  neurons, show a looming shadow, ...) and scores what the model does, so every change can be
+  checked against biology.
 - **Fly, the agent**: an open language model running on your own computer (talking, reasoning,
   designing systems, writing and running code), with Laya as a fast "System 1" in front of it. The
   fly is its body. Ask it to do a movement the fly has never done, like tapping a key, and it plans
@@ -95,34 +101,53 @@ under the fly for a tour (press it again to stop).
 
 ## The fly's body
 
-Every frame, in simulated time:
+Every frame (30 a second, in simulated time):
 
 1. **Stimuli → sensory neurons.** A dark object swooping at one eye fires that eye's LPLC2 looming
    detectors, at a rate that follows how fast the shadow grows. A sugar or bitter drop on the
    proboscis fires taste neurons. Dust on the antennae fires Johnston's organ neurons. "Activate
    neurons" drives descending neurons directly, like optogenetics.
 2. **The whole connectome runs**, brain and nerve cord together.
-3. **Motor neurons → muscles → joints** (`server/motor.py`). Motor neurons driving the same muscle on
-   the same side form a pool (237 pools). A pool's firing rate sets its muscle's activation (with a
-   twitch-like time constant), and each joint moves by agonist minus antagonist around a resting
-   pose: trochanter flexors lift the femur and extensors press it down, the tibia flexors fold the
-   leg and the extensor reaches, the tarsus depressor grips, the thorax-coxa muscles swing the leg.
-   All 805 motor neurons are mapped to a body part: six legs, two wings, two halteres, neck,
-   proboscis and pharynx, antennae, abdomen, and internal organs (crop, spiracles, salivary gland,
-   uterus, eye), each a row in the Neurons → muscles panel.
-   **How far joints move:** every leg joint rests in the middle of the range a real fly uses when
-   walking (recorded kinematics). Everyday muscle activation moves it within that range; only
-   near-full activation goes further, to 1.2× the walking range (1.7× for the front legs, which also
-   groom and reach), and hard limits stop it there, so no amount of drive flails a leg or bends it
-   backwards. Skills are held to the same limits: a plan asking for more is clipped, and Fly is told
-   which joint stopped it.
-   The ball turns under the feet that are down, in the fly's own frame (its head points forward):
-   legs sweeping backwards roll it for forward walking, forwards for backward walking, and uneven
-   left/right strokes spin it for turns.
-   Wings: the indirect flight muscles' motor neurons (DLM, DVM) set flight power, the steering
-   muscles set stroke amplitude and posture. Neck muscles turn the head; MN9 and the proboscis
-   muscles extend the proboscis; the pharyngeal muscles pump. Nothing is animated by hand except the
-   wingbeat waveform itself (a 200 Hz oscillation of the flight muscles, shown slowed down).
+3. **Motor neurons → muscles** (`server/motor.py`). Motor neurons driving the same muscle on the same
+   side form a pool (237 pools). A pool's firing rate sets its muscle's activation, with a
+   twitch-like time constant. All 805 motor neurons are mapped to a body part: six legs, two wings,
+   two halteres, neck, proboscis and pharynx, antennae, abdomen, and internal organs (crop,
+   spiracles, salivary gland, uterus, eye), each a row in the Neurons → muscles panel.
+4. **Muscles → a physical body** (`server/physics.py`). The body is NeuroMechFly (the same model
+   the meshes come from), simulated with MuJoCo: 42 leg joints, gravity, friction, adhesive foot
+   pads, and a ball with mass and air-bearing drag that turns only when feet push it. Each leg joint
+   is pulled by its agonist and antagonist muscles: their difference sets the angle the joint is
+   pulled towards, their sum how stiffly it's held (both relaxed = a floppy joint, both contracted
+   = a stiff one, as in insects). Trochanter flexors lift the femur and extensors press it down, the
+   tibia flexors fold the leg and the extensor reaches, the thorax-coxa muscles swing it, and the
+   claw muscles (tarsus depressor, long tendon) engage the sticky foot pads, which lets a leg pull the
+   ball as well as push it. The brain and the body run side by side: the body plays out one frame's
+   muscle commands while the brain computes the next (a 33 ms sensorimotor delay, about a fly's).
+5. **The body → sense organs → nerve cord** (`server/feedback.py`). Each leg's proprioceptors,
+   found in BANC by `tools/build_proprio.py` (1,032 neurons), fire from what the physics measured:
+   femoral chordotonal organ claw neurons (joint angle), hook neurons (direction of movement), club
+   neurons (movement and vibration), hair plates (a joint near the end of its range), campaniform
+   sensilla (load on the leg) and tarsal bristles (the foot on the ball). While the fly makes a
+   movement itself, claw and hook output is turned down, as presynaptic inhibition does in real
+   flies; otherwise the resistance reflexes they drive fight every step.
+
+**How far joints move:** every leg joint rests in the middle of the range a real fly uses when
+walking (recorded kinematics). Everyday muscle activation moves it within that range; only
+near-full activation goes further, to 1.2× the walking range (1.7× for the front legs, which also
+groom and reach), and hard limits stop it there. Skills are held to the same limits: a plan asking
+for more is clipped, and Fly is told which joint stopped it.
+
+Wings: the indirect flight muscles' motor neurons (DLM, DVM) set flight power, the steering muscles
+set stroke amplitude and posture. Neck muscles turn the head; MN9 and the proboscis muscles extend
+the proboscis; the pharyngeal muscles pump. These are posed from their muscles directly (the physics
+covers the legs and the ball). Nothing is animated by hand except the wingbeat waveform itself (a
+200 Hz oscillation of the flight muscles, shown slowed down).
+
+**Body buttons** (under the fly): *Physics* switches between the physical body and the kinematic
+one (joint angles straight from the muscles, ball estimated from leg sweeps; also used when MuJoCo
+isn't installed, or with `FLYBRAIN_BODY=kinematic`). *Leg feedback* connects or disconnects the
+legs' sense organs. *Rhythms* switches the built-in walking, turning and grooming rhythms (below) on
+or off, to see what the connectome does by itself.
 
 What the wiring produces, checked live and with `tools/validate.py`:
 
@@ -142,20 +167,72 @@ Three things to know:
   which an electron-microscopy connectome cannot see. Those few known ones (giant fibre → TTMn and
   PSI) are added by hand, and marked as such.
 - **Feet on the ball stop flight.** In real flies, tarsal contact inhibits flight. The body follows
-  that rule: the wings only beat after the giant-fibre jump has lifted the legs off, for as long as
-  the flight power motor neurons keep firing.
+  that rule: the wings only beat after the giant-fibre jump has lifted the legs off (or, on the
+  physical body, when no foot has touched the ball for 0.2 s), for as long as the flight power motor
+  neurons keep firing.
 - **Rhythms come from built-in skills.** Stepping and grooming rhythms are made by nerve-cord
-  circuits whose ion-channel dynamics a leaky integrate-and-fire model doesn't have, so the command
-  neurons alone only give twitches. The app ships five skills learned by the skill engine (below) on
-  this same connectome: walking forwards and backwards, turning left and right, and antennal
-  grooming (`server/data/skills_builtin.json`). When the brain's own command neurons for one of
-  them fire (P9 or DNg97, MDN, DNa01/DNa02, aDN), the body replays that skill's neuron drive as the
-  rhythm. Neurons driven by a skill don't count as commands, so a skill can't trigger itself.
+  circuits (central pattern generators) whose ion-channel dynamics a leaky integrate-and-fire model
+  doesn't have, so the command neurons alone only give twitches: with *Rhythms* off, the fly doesn't
+  walk (the scoring suite below shows it). The app ships five skills learned by the skill engine
+  on this same connectome (`server/data/skills_builtin.json`). The four gaits are made from a real
+  fly's recorded steps (`tools/gaits.py`): the recorded joint angles are turned back into the
+  muscle commands that produce them, in a tripod gait at two steps a second; backwards is the same
+  step reversed; turning steps the outer legs forwards and the inner legs backwards with a shorter
+  stride. As the stand-in for the missing rhythm circuits, they drive the leg motor neurons
+  directly (`tools/learn_builtin.py`). Grooming is driven from descending and premotor neurons.
+  When the brain's own command neurons for one of them fire (P9 or DNg97, MDN, DNa01/DNa02, aDN),
+  the body replays that skill as the rhythm. Neurons driven by a skill don't count as commands, so a
+  skill can't trigger itself, and no skill may use a neuron that also drives the jump muscle.
 
 The **Why?** card appears whenever the body starts a behaviour. It starts at the motor neurons (or
 command neurons) involved and walks backwards through the wiring: at each step, the cell type sending
 the most excitation right now (firing rate × synapse count), until it reaches a sensory neuron. It
 also names the strongest inhibitor pushing against it. The same chain lights up cyan.
+
+## Scoring against real experiments
+
+`tools/benchmark.py` does to the model what was done to real flies and scores what the body does,
+0 to 1, from what a ball tracker and a camera on a real rig would measure. Each experiment runs
+three times and the scores are averaged (the model is stochastic). Use it to check that a change
+helps rather than hurts:
+
+```bash
+uv run tools/benchmark.py                        # physical body, everything on (~10 min)
+uv run tools/benchmark.py --rhythms off          # connectome only
+uv run tools/benchmark.py --feedback 0           # legs' sense organs disconnected
+uv run tools/benchmark.py --body kinematic
+uv run tools/benchmark.py --only p9_forward,mdn_backward --repeats 1
+```
+
+Results at the time of writing (physical body, rhythms and leg feedback on):
+
+| Experiment | Real flies | Score | Measured |
+|---|---|---|---|
+| No input | stand still | 0.89 | ball ≈ 0 mm/s |
+| Activate P9 (DNp09) | walk forwards (Bidaye et al. 2020) | 0.51 | ball +2.5 mm/s (1.0 at 5 mm/s) |
+| Activate MDN | walk backwards (Bidaye et al. 2014) | 0.32 | ball −0.9 mm/s (1.0 at −3 mm/s) |
+| Activate DNa02, left / right | turn that way (Rayshubskiy et al. 2020) | 0.25 / 0.28 | ~0.1 rad/s the right way (1.0 at 0.5 rad/s) |
+| Activate the giant fibre | escape jump within ms (von Reyn et al. 2014) | 1.00 | jump muscle in the first frame (33 ms) |
+| Looming shadow, left / right | escape takeoff before contact | 0.93 / 1.00 | jump muscle ~0.5 s after onset |
+| Activate aDN (DNg62) | antennal grooming (Hampel et al. 2015) | 1.00 | front legs raised to the head |
+| Dust on the antennae | antennal grooming (Seeds et al. 2014) | 0.00 | no grooming: the touch → aDN pathway is too weak in this wiring |
+| Sugar / bitter on the proboscis | extend / don't (Shiu et al. 2024) | 1.00 / 1.00 | |
+| Fruit odour, geosmin, CO₂, heat, cold | no takeoff or jump (controls) | 1.00 each | |
+| **Total** | | **0.78** | |
+
+The same suite on other settings: kinematic body 0.83 (its ball is only estimated from leg sweeps,
+which flatters turning); leg feedback off 0.79; **rhythms off 0.67**, because the connectome by
+itself doesn't walk, turn or keep grooming. What limits the scores now:
+
+- **Precision of the learned drive.** Played perfectly, the gaits walk at +3.1 and −3.1 mm/s and turn
+  at ±0.4–0.5 rad/s on the physical body. Driving 30 motor-neuron pools through the live network,
+  the skill engine reproduces the planned muscle activity at about 0.72, which halves walking and
+  mostly cancels the small left-right difference that turning depends on.
+- **No rhythm generators in the nerve cord.** The gaits stand in for them.
+- **Slow steps.** Real flies step 5–15 times a second; the built-in gait steps twice, which is what
+  the drive can follow through 30 ms muscles and 33 ms frames.
+- **Leg feedback doesn't help yet.** The sense organs report correctly, but nothing in the model uses
+  them to time steps, which is what they're for in a real fly.
 
 ## Skills: teaching the fly new movements
 
@@ -389,6 +466,9 @@ POST http://localhost:8765/api/command
 {"cmd": "speed",  "value": 0.5}
 {"cmd": "body",   "action": "loom", "side": "left"}   # also sugar, bitter, dust, p9, mdn,
                                                      # dna02_l, dna02_r, gf, adn, stop, reset
+{"cmd": "body",   "action": "physics", "on": true}     # physical or kinematic body
+{"cmd": "body",   "action": "feedback", "gain": 1}     # legs' sense organs -> nerve cord (0 = off)
+{"cmd": "body",   "action": "rhythms", "on": true}     # built-in walking/turning/grooming rhythms
 {"cmd": "skill",  "action": "play", "name": "tap_front_left"}   # also stop, forget
 
 GET /api/status         behaviour levels, region activity, top firing neurons
@@ -404,7 +484,8 @@ GET /api/agent/status   model, hardware, Laya, conversation
 ```
 
 The browser gets a WebSocket stream (`/ws`) of every spike (binary), status JSON 5× a second, the
-body's state (joint offsets, muscle activation per body part) every frame, a `decision` message
+body's state (joint offsets, muscle activation per body part, the ball, and on the physical body
+which feet touch the ball and what the legs' sense organs report) every frame, a `decision` message
 with the traced pathway whenever the body starts a behaviour, and `skill` messages while a skill is
 learned or performed.
 
@@ -414,25 +495,32 @@ learned or performed.
 server/app.py          web server, simulation loop, API
 server/sim.py          the network simulator (numba)
 server/connectome.py   downloads + packs the BANC connections (first run)
-server/motor.py        motor neurons -> muscles -> joints
-server/body.py         stimuli -> sensory neurons; what the body is doing
+server/motor.py        motor neurons -> muscles -> joint targets and stiffness
+server/physics.py      the physical body and ball (MuJoCo, NeuroMechFly)
+server/feedback.py     the legs' sense organs -> sensory neurons
+server/body.py         stimuli -> sensory neurons; runs the body; what the body is doing
 server/skills.py       learning new movements: wiring search, practice, skill library
 server/agent/          the AI: runtime.py (llama.cpp setup), models.py, llm.py, system1.py (Laya),
                        agent.py (loop, conversations, KV cache), tools.py, bridge.py (body link)
-server/data/           neuron labels and signs, senses, readouts, motor pools, loop-neuron mask,
-                       built-in skills (skills_builtin.json)
+server/data/           neuron labels and signs, senses, readouts, motor pools, leg sense organs,
+                       loop-neuron mask, built-in skills (skills_builtin.json), and the
+                       NeuroMechFly body model (neuromechfly.xml, from flygym, Apache 2.0)
 web/                   the 3D viewer (three.js, bundled); web/fly.js is the 3D fly, web/chat.js the chat
 web/data/fly_body.*    the fly's meshes, skeleton and resting pose (from NeuroMechFly)
 tools/fetch_banc.sh    downloads the BANC annotation files build_banc.py needs
 tools/build_banc.py    rebuilds web/data and server/data from the BANC files
 tools/find_loops.py    finds the neurons that get adaptation in stabilised mode
+tools/benchmark.py     scores the model against published experiments
 tools/validate.py      checks known behaviours and which body parts each input moves
+tools/build_proprio.py finds each leg's sense organs in BANC (needs the BANC annotation file)
+tools/gaits.py         walking and turning plans from a real fly's recorded steps
+tools/learn_builtin.py relearns the built-in skills on the connectome
 tools/build_body.py    rebuilds web/data/fly_body.* from the flygym package
 tools/mock_llm.py      a scripted fake model server for testing the agent without a download
 
 Created on your machine and kept out of git (see .gitignore): .tools/, .cache/ (uv, Python, the BANC
 download), .venv-<profile>/, runtime/ (llama.cpp), models/ (GGUF files), data/ (your conversations,
-KV caches, memory notes, learned skills, logs, per-machine settings), workspace/ (the agent's
+KV caches, memory notes, learned skills, scoring results, logs, per-machine settings), workspace/ (the agent's
 code), llm_config.json (your overrides), server/data/connectome_*.npz (built from the download).
 ```
 
@@ -446,7 +534,11 @@ code), llm_config.json (your overrides), server/data/connectome_*.npz (built fro
 - Model: Shiu et al., *Nature* 2024.
 - Fly body: [NeuroMechFly v2 / flygym](https://github.com/NeLy-EPFL/flygym) (Apache 2.0),
   Lobato-Rios et al., *Nature Methods* 2022 and Wang-Chen et al., *Nature Methods* 2024: the body
-  meshes and skeleton (simplified here) and a resting pose from recorded walking.
+  model (MJCF), meshes and skeleton (simplified here), the ball rig, and recorded walking steps.
+  Physics: [MuJoCo](https://mujoco.org) (Apache 2.0).
+- Leg sense organs: Tuthill and Wilson 2016; Mamiya et al. 2018 and 2023 (femoral chordotonal
+  organ); Dallmann et al. 2023 (presynaptic inhibition of leg proprioceptors during movement); BANC's
+  sensory annotations.
 - Muscles and motor neurons: Azevedo et al. 2024 (leg), Lindsay et al. 2017 and Muijres et al. 2014
   (wing steering), Schwarz et al. 2017 and McKellar et al. 2020 (proboscis). Giant fibre gap
   junctions: King and Wyman 1980, Allen et al. 2006.

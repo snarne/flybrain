@@ -1,0 +1,94 @@
+"""
+The body talking back: leg sense organs -> sensory neurons in the connectome.
+
+Each frame the physics body (physics.py) reports every leg's joint angles, joint speeds, the load on
+the leg and whether it touches the ball. This turns them into firing rates for the leg's
+proprioceptive and touch neurons (found in BANC by tools/build_proprio.py), which then drive the nerve
+cord like any other input. Tuning follows recordings where they exist (Mamiya et al. 2018, 2023;
+Tuthill & Wilson 2016; Zill et al. 2004):
+
+  claw  tonic, range-fractionated position: flexion neurons fire as the femur-tibia joint flexes past
+        rest, extension neurons as it extends
+  hook  phasic, direction: flexion or extension movement, scaled by speed
+  club  movement in either direction, scaled by speed (the organ also senses vibration)
+  hp    hair plates: the joint approaching either end of its range
+  cs    campaniform sensilla: load on the leg
+  touch tarsal tactile bristles: the foot on the ball
+
+Presynaptic inhibition: during movements the fly makes itself, GABAergic interneurons suppress the
+claw (position) and hook (movement) neurons' output, while club and load signals get through
+(Dallmann et al. 2023, "Presynaptic inhibition selectively suppresses leg proprioception in behaving
+Drosophila"). A leaky integrate-and-fire network has no presynaptic inhibition, so it's applied here:
+while a movement is being produced (a rhythm or a skill), claw and hook rates are scaled by GATED.
+Without it, the resistance reflexes these neurons drive fight every step.
+
+Directions use the model's joint angles: for the tibia, a larger angle is more flexed (motor.py's
+"reach" extends the tibia by making it smaller).
+"""
+import numpy as np
+
+MAX_HZ = 150.0
+TONIC_HZ = {"claw": 150.0, "hook": 150.0, "club": 100.0, "hp": 60.0, "cs": 80.0, "touch": 60.0}
+SPEED_FULL = 10.0       # rad/s of joint speed that saturates the movement-sensing neurons
+HP_START = 0.6          # hair plates start firing past this fraction of the joint's walking range
+LOAD_FULL = 12.0        # contact force on a leg that saturates its campaniform sensilla (model units)
+QUANT = 5.0             # rates are rounded to this many Hz, so small wobbles don't rebuild the input
+GATED = 0.2             # claw and hook output during self-generated movement (presynaptic inhibition)
+GATED_ORGANS = ("claw", "hook")
+ORGAN_GAIN = {}          # per-organ multiplier (experiments)
+
+
+class Feedback:
+    def __init__(self, groups, ranges, neutral):
+        """groups: presets["proprio"]; ranges: motor.py's per-leg joint ranges; neutral: resting angles."""
+        self.groups = [g for g in groups if g["neurons"]]
+        self.ranges = ranges
+        self.neutral = neutral
+        self.gain = 1.0
+        self.last = {}
+        self.neurons = sorted({n for g in self.groups for n in g["neurons"]})
+
+    def rates(self, sensed, moving=False):
+        """sensed: physics.PhysicsBody.sensed(); moving: the fly is making a movement itself.
+        Returns {neuron: Hz} (only neurons that fire)."""
+        out = {}
+        if sensed is None or self.gain <= 0:
+            return out
+        A, V = sensed["angle"], sensed["vel"]
+        for g in self.groups:
+            leg, organ, joint, sense = g["leg"], g["organ"], g["joint"], g["sense"]
+            x = 0.0
+            if joint is not None:
+                a = A.get((leg, joint), 0.0) - self.neutral[leg][joint]
+                v = V.get((leg, joint), 0.0)
+                half = max(self.ranges.get(leg, {}).get(joint, {}).get("half", 0.3), 0.05)
+                if organ == "claw":
+                    x = (a if sense == "flexion" else -a if sense == "extension" else abs(a)) / half
+                elif organ == "hook":
+                    x = (v if sense == "flexion" else -v if sense == "extension" else abs(v)) / SPEED_FULL
+                elif organ == "club":
+                    x = abs(v) / SPEED_FULL
+                elif organ == "hp":
+                    x = (abs(a) / half - HP_START) / (1.0 - HP_START)
+            elif organ == "cs":
+                x = sensed["load"].get(leg, 0.0) / LOAD_FULL
+            elif organ == "touch":
+                x = sensed["touch"].get(leg, 0.0)
+            hz = TONIC_HZ.get(organ, MAX_HZ) * float(np.clip(x, 0.0, 1.0)) * self.gain
+            if moving and organ in GATED_ORGANS:
+                hz *= GATED
+            hz *= ORGAN_GAIN.get(organ, 1.0)
+            hz = round(hz / QUANT) * QUANT
+            if hz > 0:
+                for n in g["neurons"]:
+                    out[n] = max(out.get(n, 0.0), hz)
+        return out
+
+    def summary(self, rates):
+        """Mean rate per leg and organ, for the panel."""
+        s = {}
+        for g in self.groups:
+            r = [rates.get(n, 0.0) for n in g["neurons"]]
+            k = f"{g['leg']}.{g['organ']}"
+            s[k] = max(s.get(k, 0.0), round(float(np.mean(r)), 1))
+        return s

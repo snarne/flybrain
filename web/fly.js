@@ -205,7 +205,9 @@ export async function createFlyView(dom) {
   function update(dt) {
     t += dt;
     const J = st.joints;
-    const k = Math.min(1, dt * 10);   // smooth the 30 Hz joint stream
+    const P = st.physics || {};
+    // smooth the 30 Hz joint stream (the physical body's poses are already smooth: follow them closely)
+    const k = Math.min(1, dt * (P.on ? 25 : 10));
     // legs: resting pose + offsets computed from muscle activation
     for (const leg of LEGS) {
       const off = J?.legs?.[leg] || {};
@@ -289,8 +291,17 @@ export async function createFlyView(dom) {
     // top backwards (about the fly's side-to-side axis), backwards the other way, and turning spins it
     // about the vertical. Rotations are applied about these fixed axes every frame, so they stay tied to
     // the fly's heading however far the ball has already turned.
-    ball.quaternion.premultiply(qRoll.setFromAxisAngle(Y, -(ball_[0] / ballR) * dt));
-    ball.quaternion.premultiply(qRoll.setFromAxisAngle(Z, ball_[1] * dt * 0.6));
+    if (P.on && P.ball_q) {
+      // physical body: the ball is where MuJoCo has it, turned exactly as the feet turned it
+      ballPivot.position.z = P.ball_z;
+      cup.position.z = P.ball_z - 2.22;
+      ball.quaternion.set(P.ball_q[1], P.ball_q[2], P.ball_q[3], P.ball_q[0]);
+    } else {
+      ballPivot.position.z = -ballR + 0.02;
+      cup.position.z = -ballR - 2.2;
+      ball.quaternion.premultiply(qRoll.setFromAxisAngle(Y, -(ball_[0] / ballR) * dt));
+      ball.quaternion.premultiply(qRoll.setFromAxisAngle(Z, ball_[1] * dt * 0.6));
+    }
 
     // stimuli
     if (st.loom) {

@@ -122,6 +122,14 @@ def _load_memory():
         return []
 
 
+
+def _ball_text(b):
+    """The physical result of a movement: what the ball under the fly did."""
+    if not b:
+        return ""
+    return (f"On the ball: {b['forward_mm_s']:+.2f} mm/s forward on average (peak {b['peak_forward_mm_s']:+.2f}), "
+            f"turning {b['turn_left_rad_s']:+.2f} rad/s (+ = left). ")
+
 class ToolRunner:
     def __init__(self, world, bridge):
         self.world = world
@@ -266,9 +274,10 @@ class ToolRunner:
         action, side = EXPERIMENTS[experiment]
         t0, n0, wall0 = self.world.brain.t_ms, len(body.decisions), time.time()
         body.start(action, side)
-        modes, peak_rates, peak_muscles = [], {}, {}
+        modes, peak_rates, peak_muscles, ball = [], {}, {}, []
         while self.world.brain.t_ms < t0 + 5000 and time.time() - wall0 < 60:
             await asyncio.sleep(0.05)
+            ball.append(tuple(body.ball))
             if not modes or modes[-1] != body.mode:
                 modes.append(body.mode)
             for k, v in body.rates.items():
@@ -283,7 +292,11 @@ class ToolRunner:
             chain = " -> ".join(f"{g['type']} ({g['hz']} Hz)" for g in d["chain"])
             inh = f"; opposed by {d['inhibitor']['type']}" if d.get("inhibitor") else ""
             why.append(f"- {d['title']}: {d['why']}. Pathway: {chain}{inh}")
-        return (f"Experiment '{experiment}' on the tethered fly, 5 s of brain time. Body: {seq}. "
+        fwd = sum(b[0] for b in ball) / max(len(ball), 1)
+        turn = -sum(b[1] for b in ball) / max(len(ball), 1)
+        kind = "physical body" if getattr(body, "phys", None) is not None else "kinematic body (ball estimated)"
+        return (f"Experiment '{experiment}' on the tethered fly ({kind}), 5 s of brain time. Body: {seq}. "
+                f"Ball: {fwd:+.1f} mm/s forward, turning {turn:+.2f} rad/s (+ = left). "
                 f"Peak command/motor neuron rates: {rates}. Muscles used: {muscles}.\n"
                 + ("Decisions, traced through the connectome:\n" + "\n".join(why) if why else "No behaviour change was triggered.")), True, {}
 
@@ -314,6 +327,7 @@ class ToolRunner:
         return (f"Learned '{name}' in {r['seconds']} s.{lim} Practice scores {r['attempts']} (best {r['score']}; 1.0 = the "
                 f"muscles did exactly what you planned). Per control: {r['per_control']}. Neurons driven: {drv}. "
                 f"Saved: do_skills can now replay it instantly. Planned vs achieved (control values, -1..1): {tl}. "
+                f"{_ball_text(r.get('ball'))}"
                 f"If something lags or overshoots, refine_skill with an adjusted timeline."), True, {}
 
     async def t_do_skills(self, names, repeat=1):
@@ -351,5 +365,5 @@ class ToolRunner:
         tl = "; ".join(f"{k}: " + ", ".join(f"t={t} plan {p:+.2f} got {g:+.2f}" for t, p, g in pts)
                        for k, pts in (r.get("timeline") or {}).items())
         return (f"Refined '{name}': score {r['score']} (was {old.get('score')}), tries {r['attempts']}. "
-                f"Planned vs achieved: {tl}"), True, {}
+                f"Planned vs achieved: {tl}. {_ball_text(r.get('ball'))}"), True, {}
 

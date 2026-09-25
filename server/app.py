@@ -86,7 +86,8 @@ class World:
         self.pending = deque()
         self.hist = deque()           # (t_ms, region_counts, readout_counts)
         self.rate = np.zeros(self.N, np.float32)   # smoothed Hz per neuron
-        self.sim_ratio = 1.0
+        self.sim_ratio = 1.0          # simulated seconds per second of compute (brain, and body when physical)
+        self.brain_ratio = 1.0
         self.stim_log = deque(maxlen=50)
 
     # ------------------------------------------------------------ commands
@@ -119,7 +120,9 @@ class World:
                     self.neuron_stim.pop(int(i), None)
             self._push_stim()
         elif cmd == "channel":                   # agent bridge: {"cmd":"channel","name":"hear","neurons":[...],"rate":120}
-            if float(c.get("rate", 0)) > 0:
+            if c.get("rates"):                   # per-neuron rates, e.g. the legs' sense organs: {"rates": {idx: Hz}}
+                self.channel_stim[c["name"]] = {int(i): float(r) for i, r in c["rates"].items() if r > 0}
+            elif float(c.get("rate", 0)) > 0:
                 self.channel_stim[c["name"]] = {int(i): float(c["rate"]) for i in c["neurons"]}
             else:
                 self.channel_stim.pop(c["name"], None)
@@ -182,7 +185,9 @@ class World:
         t0 = time.perf_counter()
         spk = self.brain.step(sim_ms).copy()
         el = time.perf_counter() - t0
-        self.sim_ratio = 0.8 * self.sim_ratio + 0.2 * (sim_ms / 1000.0) / max(el, 1e-6)
+        self.brain_ratio = 0.8 * self.brain_ratio + 0.2 * (sim_ms / 1000.0) / max(el, 1e-6)
+        if getattr(self, "body", None) is None or self.body.phys is None:
+            self.sim_ratio = self.brain_ratio
         t = self.brain.t_ms
         reg = np.bincount(self.region[spk], minlength=self.n_regions)
         ro = self.readout_of[spk[~self.skill_driven[spk]]]
@@ -219,6 +224,7 @@ class World:
             "paused": self.paused,
             "speed": self.speed,
             "sim_ratio": round(float(self.sim_ratio), 2),
+            "brain_ratio": round(float(self.brain_ratio), 2),
             "near_threshold": self.brain.active_count,
             "firing": int((self.rate > 1.0).sum()),
             "regions": [{"hz_total": round(float(reg[i]), 1), "hz_per_neuron": round(float(reg[i] / counts[i]), 3)} for i in range(self.n_regions)],
@@ -375,13 +381,24 @@ from skills import SkillEngine  # noqa: E402
 
 body = Body(world)
 world.body = body  # so the agent's tools can run experiments on it
+# the physical body is the default wherever MuJoCo is installed; FLYBRAIN_BODY=kinematic turns it off
+if os.environ.get("FLYBRAIN_BODY", "physics").lower() != "kinematic":
+    body.set_physics(True)
 skills = SkillEngine(world, world.motor, lambda m: emit(m))
 world.skills = skills
 
 
 def handle_body_command(c):
     a = c.get("action")
-    if a == "reset":
+    if a == "physics":                       # {"cmd":"body","action":"physics","on":true}
+        body.set_physics(bool(c.get("on", True)))
+    elif a == "rhythms":                     # built-in walking/grooming rhythms on or off
+        body.rhythms = bool(c.get("on", True))
+        if not body.rhythms and skills.state and skills.state.get("kind") == "reflex":
+            skills.stop()
+    elif a == "feedback":                    # leg sense organs -> nerve cord, gain 0..2
+        body.set_feedback(float(c.get("gain", 1.0)))
+    elif a == "reset":
         skills.stop()
         body.reset()
         world.pending.append({"cmd": "reset"})
@@ -647,7 +664,15 @@ async def run_loop():
         if not world.paused:
             body.sense(sim_ms / 1000.0)
             skills.tick(sim_ms / 1000.0)
-        spk = await loop.run_in_executor(None, world.frame, sim_ms)
+        # the brain and the physical body run side by side: the body plays out the last frame's muscle
+        # commands while the brain computes the next frame
+        tc = time.perf_counter()
+        brain = loop.run_in_executor(None, world.frame, sim_ms)
+        if body.phys is not None and not world.paused:
+            await loop.run_in_executor(None, body.physics_step, sim_ms / 1000.0)
+        spk = await brain
+        if body.phys is not None and spk is not None:
+            world.sim_ratio = 0.8 * world.sim_ratio + 0.2 * (sim_ms / 1000.0) / max(time.perf_counter() - tc, 1e-6)
         if spk is not None:
             skills.observe(sim_ms / 1000.0)
             body.act(sim_ms / 1000.0, world.motor, world.fast_readouts(), skill=skill_brief())

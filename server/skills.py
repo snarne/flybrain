@@ -181,11 +181,21 @@ class SkillEngine:
             mn = sorted({n for i in pools for n in self.m.pools[i]["neurons"]})
             if mn:
                 M[mn, c] = 1.0 / len(mn)
-        E1 = A @ M
+        # plus one column for what a skill must never set off: the jump muscle's motor neuron (TTMn), the
+        # giant fibre's escape output. It isn't a control, so without this a driver that happens to
+        # excite it would kick the fly's middle legs mid-movement.
+        avoid = sorted({n for p in self.m.pools if p["muscle"].startswith("jump") for n in p["neurons"]})
+        Mx = np.zeros((N, C + 1), np.float32)
+        Mx[:, :C] = M
+        if avoid:
+            Mx[avoid, C] = 1.0 / len(avoid)
+        E1 = A @ Mx
         E2 = A @ E1
         E3 = A @ E2
-        self.E1 = np.asarray(E1, np.float32)
-        self.E = np.asarray(E1 + 0.7 * E2 + 0.5 * E3, np.float32)
+        E = np.asarray(E1 + 0.7 * E2 + 0.5 * E3, np.float32)
+        self.E1 = np.asarray(E1, np.float32)[:, :C]
+        self.E = E[:, :C]
+        self.E_avoid = E[:, C]
 
     def candidates(self, ch, level, k=4, exclude=()):
         """Neurons at `level` that push channel ch hardest and most specifically."""
@@ -208,12 +218,14 @@ class SkillEngine:
         others = np.clip(sub, 0, None).sum(1) - t - (np.clip(sub[:, anti], 0, None) if anti is not None else 0.0)
         spec = t - 1.0 * np.clip(a, 0, None) - 0.35 * others
         good = (spec > 0.25 * t) & (t > (0.002 if level == "descending" else 0.01))
+        good &= self.E_avoid[idx] <= 0.05 * t          # nothing that also drives the jump muscle
         idx, spec, t = idx[good], spec[good], t[good]
         order = np.argsort(-spec)[:k]
         return [(int(idx[i]), float(spec[i]), float(t[i])) for i in order]
 
-    def pick_drivers(self, tracks):
-        """For each channel the plan uses: the best available drivers, highest level first."""
+    def pick_drivers(self, tracks, levels=None):
+        """For each channel the plan uses: the best available drivers, highest level first (only from
+        `levels` if given, e.g. the nerve cord's own premotor and motor neurons for a rhythm)."""
         drivers = []
         for key, tr in tracks.items():
             for d in (+1, -1):
@@ -224,6 +236,8 @@ class SkillEngine:
                     continue
                 ch = (key, d)
                 for li, level in enumerate(LEVELS):
+                    if levels and level not in levels:
+                        continue
                     cands = self.candidates(ch, level, k=2 if level == "descending" else 3)
                     if level == "motor":
                         cands = [(n, 1.0, 1.0) for n in self.m.control_neurons(key)
@@ -251,7 +265,7 @@ class SkillEngine:
     def start(self, kind, name, drivers, tracks, duration, attempt=None):
         self._schedule(drivers, tracks, duration)
         self.state = {"kind": kind, "name": name, "t": 0.0, "duration": duration + 0.35, "drivers": drivers,
-                      "tracks": tracks, "rec": {k: [] for k in self.m.controls}, "attempt": attempt, "last": None}
+                      "tracks": tracks, "rec": {k: [] for k in self.m.controls}, "attempt": attempt, "last": None, "ball": []}
         self.done = asyncio.Event()
         neurons = sorted({n for d in drivers for n in d["neurons"]})
         self.emit({"type": "skill", "event": "run", "kind": kind, "name": name, "attempt": attempt,
@@ -292,6 +306,9 @@ class SkillEngine:
             return
         for k in s["rec"]:
             s["rec"][k].append((s["t"], self.m.value[k]))
+        body = getattr(self.w, "body", None)
+        if body is not None:
+            s.setdefault("ball", []).append(tuple(body.ball))
         s["t"] += dt
         if s["t"] >= s["duration"]:
             self.w.channel_stim.pop("skill", None)
@@ -314,6 +331,16 @@ class SkillEngine:
         self.start("reflex", name, drivers, tracks, duration)
         self.state["duration"] = duration          # no settling pause: the next cycle follows straight on
         return True
+
+    def ball_summary(self, s):
+        """What the movement did to the ball (the physical result, as a tracker would measure it)."""
+        b = (s or {}).get("ball") or []
+        if not b:
+            return None
+        f = np.array([x[0] for x in b])
+        t = -np.array([x[1] for x in b])          # + = turning left
+        return {"forward_mm_s": round(float(f.mean()), 2), "turn_left_rad_s": round(float(t.mean()), 2),
+                "peak_forward_mm_s": round(float(f[np.argmax(np.abs(f))]), 2)}
 
     def stop(self):
         if self.state:
@@ -476,6 +503,16 @@ class SkillEngine:
                   "apart; the engine samples every 20 ms and compares what the muscles did with your plan.",
                   "  Plans are linear between keyframes; a control not mentioned stays 0 (relaxed); a control keeps its "
                   "last value after its last keyframe, so return it to 0 explicitly.",
+                  "  This body's built-in walk: 2 steps per second (what the neural drive can follow reliably).",
+                  "",
+                  "PHYSICS (the body is simulated with gravity, contacts and a real ball):",
+                  "  A foot moves the ball only while it is down and pressing (lift <= 0); lift it (lift > 0.3) to swing "
+                  "it forward without dragging the ball back. Claws (grip +) engage the sticky pads: needed to pull the "
+                  "ball, e.g. for walking backwards. Hind legs do most of the pushing (reach + during stance, i.e. the "
+                  "tibia extending, drives the fly forward); middle legs mostly by twist and swing; front legs little.",
+                  "  Agonist + antagonist together stiffen a joint; a relaxed joint is floppy and gets dragged by the ball.",
+                  "  learn_skill and body_experiment report what the ball did (forward mm/s, turning rad/s): use it to "
+                  "check a movement had the physical effect you wanted, and refine_skill if not.",
                   "",
                   "WORKED EXAMPLES (built-in skills, learned on this connectome):"]
         for name in ("walk_forward", "groom_antennae"):
@@ -503,7 +540,7 @@ class SkillEngine:
                       for t in ts]
         return out
 
-    async def learn(self, name, description, plan, attempts=8, warm=None):
+    async def learn(self, name, description, plan, attempts=8, warm=None, levels=None):
         if self.busy:
             return {"ok": False, "error": "busy with another movement"}
         self.busy = True
@@ -515,7 +552,7 @@ class SkillEngine:
             self.emit({"type": "skill", "event": "search", "name": name})
             if self.E is None:
                 await asyncio.get_running_loop().run_in_executor(None, self.build_influence)
-            drivers = self.pick_drivers(tracks)
+            drivers = self.pick_drivers(tracks, levels)
             if warm:
                 # refining a known skill: keep the neurons already found for each movement (the expensive part)
                 old = {d["channel"]: d for d in warm.get("drivers", []) if not d.get("trim")}
@@ -540,6 +577,7 @@ class SkillEngine:
                 if best is None or score > best[0]:
                     best = (score, json.loads(json.dumps(drivers, default=float)), per)
                     best_tl = self.timeline(tracks, ach, plan)
+                    best_ball = self.ball_summary(self.result)
                 self.emit({"type": "skill", "event": "attempt", "name": name, "attempt": a, "score": round(score, 3),
                            "per_control": {k: round(float(v), 2) for k, v in per.items()}})
                 if score >= 0.8 or a == attempts:
@@ -563,7 +601,7 @@ class SkillEngine:
             self.emit({"type": "skill", "event": "learned", "name": name, "score": skill["score"],
                        "attempts": history, "seconds": round(time.time() - t0, 1)})
             return {"ok": True, "name": name, "score": skill["score"], "attempts": history, "limits": notes,
-                    "timeline": best_tl,
+                    "timeline": best_tl, "ball": best_ball,
                     "per_control": {k: round(float(v), 2) for k, v in per.items()},
                     "drivers": [self._describe(d) for d in drv],
                     "seconds": round(time.time() - t0, 1)}

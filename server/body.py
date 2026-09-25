@@ -15,16 +15,28 @@ Like a real neuroscience rig, the fly is held over a floating ball. Every frame,
 The label on screen ("Feeding", "Escape jump", ...) is read from what the muscles are doing, with
 some hysteresis so a brief twitch doesn't flip it back and forth.
 
+The body comes in two kinds:
+- physical (default when MuJoCo is installed; physics.py): the NeuroMechFly body with gravity, contacts
+  and a real ball; muscles set each joint's target angle and stiffness; the legs' sense organs report
+  back into the nerve cord every frame (feedback.py), so the brain feels what its body did.
+- kinematic: joint angles straight from the muscles, ball estimated from leg sweeps.
+
 Two rules from fly physiology the connectome alone doesn't give:
 - Flight needs the feet off the ground. Tarsal contact inhibits flight, so a fly standing on the ball
   doesn't beat its wings even if the flight power muscles' motor neurons fire; the giant-fibre jump
   lifts the legs off and flight can start.
 - Rhythms: walking and grooming need nerve-cord rhythm generators the model lacks. When the brain's
-  command neurons for them fire, the matching built-in skill supplies the rhythm (skills.py).
+  command neurons for them fire, the matching built-in skill supplies the rhythm (skills.py). This
+  can be switched off ("connectome only") to see what the wiring does by itself.
 """
+import json
 import math
+from pathlib import Path
 
 import numpy as np
+
+import feedback as feedback_mod
+import physics as physics_mod
 
 # Descending neurons that can be activated directly (like optogenetics), and what's known about them
 ACTIVATE = {
@@ -40,6 +52,15 @@ ACTIVATE = {
 class Body:
     def __init__(self, world):
         self.w = world
+        self.rhythms = True          # built-in rhythms for walking/grooming when their command neurons fire
+        self.phys = None             # physics.PhysicsBody when the physical body is on
+        self.phys_error = None
+        self.sensed = None
+        self.fb_rates, self.fb_summary = {}, {}
+        self._cmd = None             # muscle commands for the next physics step
+        steps = json.loads(physics_mod.BODY_JSON.read_text())["steps"]["legs"]
+        self.neutral = {leg: {d: (min(v) + max(v)) / 2 for d, v in dofs.items()} for leg, dofs in steps.items()}
+        self.fb = feedback_mod.Feedback(world.presets.get("proprio", []), world.motor.ranges, self.neutral)
         T = world.tables
         self.types = np.array(T["type"])[world.type]
         self.sides = np.array(T["side"])[world.side]
@@ -56,6 +77,26 @@ class Body:
             m &= self.sides == side
         return np.where(m)[0].tolist()
 
+    # ------------------------------------------------------------ which body
+    def set_physics(self, on):
+        """Switch between the physical body and the kinematic one. Returns whether physics is on."""
+        if on and self.phys is None:
+            try:
+                self.phys = physics_mod.PhysicsBody(self.neutral)
+                self.phys_error = None
+            except Exception as e:           # MuJoCo missing or failed: stay kinematic, say why
+                self.phys, self.phys_error = None, str(e)
+        elif not on and self.phys is not None:
+            self.phys = None
+            self.w.pending.append({"cmd": "channel", "name": "proprio", "rate": 0})
+        self._cmd, self.sensed = None, None
+        return self.phys is not None
+
+    def set_feedback(self, gain):
+        self.fb.gain = float(max(0.0, min(2.0, gain)))
+        if self.fb.gain == 0:
+            self.w.pending.append({"cmd": "channel", "name": "proprio", "rate": 0})
+
     # ------------------------------------------------------------ experiments
     def reset(self):
         self.mode, self.mode_t = "rest", 0.0
@@ -71,8 +112,14 @@ class Body:
         self.ball = [0.0, 0.0]    # forward (mm/s), yaw (rad/s) of the ball under the fly
         self.rates, self.senses = {}, {}
         self._sent = {}
+        self._untouched = 0.0
+        self._cmd = None
+        self.sensed = None
+        self.fb_rates, self.fb_summary = {}, {}
+        if self.phys is not None:
+            self.phys.reset()
         for name in list(self.w.channel_stim):
-            if name.startswith(("body_", "act_")):
+            if name.startswith(("body_", "act_", "proprio")):
                 self.w.pending.append({"cmd": "channel", "name": name, "rate": 0})
 
     def start(self, action, arg=None):
@@ -154,7 +201,7 @@ class Body:
         self.rates = r
         v = motor.value
         eng = getattr(self.w, "skills", None)
-        rx = self._reflex_for(r)
+        rx = self._reflex_for(r) if self.rhythms else None
         if rx and eng is not None and not eng.state and not eng.busy and eng.get(rx[0]):
             if not (self.mode == "reflex" and self._reflex == rx[0]):
                 self.events.append({"event": rx[0], "key": rx[1], "why": rx[2]})
@@ -180,6 +227,13 @@ class Body:
             self.air_t = self.air_t + dt if power < 0.2 else 0.0
             if self.air_t > 0.4:
                 self.airborne = False
+        if self.sensed is not None:
+            # physical body: the tarsal reflex reads real contact; with no foot on the ball for 0.2 s the
+            # flight motor is released, as when a fly is lifted off the ground
+            touching = sum(self.sensed["touch"].values())
+            self._untouched = self._untouched + dt if touching == 0 else 0.0
+            if self._untouched > 0.2 and power > 0.3:
+                self.airborne, self.air_t = True, 0.0
         cands[1] = ("fly", cands[1][1], self.airborne and power > 0.3, cands[1][3])
         want = next(((lab, key, why) for lab, key, cond, why in cands if cond), ("rest", None, ""))
         if skill:
@@ -200,8 +254,23 @@ class Body:
         else:
             self._pending, self._pending_t = None, 0.0
         self.mode_t += dt
-        # the ball turns under the legs that are on it: a leg in stance (not lifted) sweeping backwards
-        # pushes the fly forwards, sweeping forwards pushes it backwards; left vs right turns it
+        self.joints = motor.joints()
+        self.parts = motor.summary()
+        if self.phys is not None:
+            # physical body: the muscles' commands go to the next physics step; the pose and ball shown
+            # are what the physics made of the last ones
+            stiff, adh = motor.muscles()
+            target = {(leg, d): self.neutral[leg][d] + off for leg, dofs in self.joints["legs"].items() for d, off in dofs.items()}
+            self._cmd = (target, stiff, adh)
+            if self.sensed is not None:
+                A = self.sensed["angle"]
+                self.joints["legs"] = {leg: {d: round(A[(leg, d)] - self.neutral[leg][d], 4) for d in physics_mod.DOFS}
+                                       for leg in physics_mod.LEGS}
+                self.ball = [self.sensed["forward"], -self.sensed["yaw"]]
+            return
+        # kinematic body: the ball turns under the legs that are on it: a leg in stance (not lifted)
+        # sweeping backwards pushes the fly forwards, sweeping forwards pushes it backwards; left vs
+        # right turns it
         fwd_l = fwd_r = 0.0
         for leg in legs:
             s_now = v.get(f"{leg}.swing", 0)
@@ -216,8 +285,22 @@ class Body:
         k = 0.12
         self.ball = [(1 - k) * self.ball[0] + k * 0.6 * (fwd_l + fwd_r) / 2,
                      (1 - k) * self.ball[1] + k * 0.35 * (fwd_l - fwd_r)]   # + = left legs push harder = turning right
-        self.joints = motor.joints()
-        self.parts = motor.summary()
+
+    def physics_step(self, dt):
+        """Run the physical body for dt seconds on the last muscle commands, then report what the legs'
+        sense organs feel to the nerve cord. Runs alongside the next brain frame (a one-frame, ~33 ms,
+        sensorimotor delay, about what a fly has)."""
+        ph = self.phys
+        if ph is None or self._cmd is None:
+            return
+        self.sensed = ph.step(dt, *self._cmd)
+        eng = getattr(self.w, "skills", None)
+        moving = bool(eng is not None and eng.state)     # a rhythm or skill is running: gate claw/hook
+        rates = self.fb.rates(self.sensed, moving)
+        if rates != self.fb_rates:
+            self.fb_rates = rates
+            self.w.pending.append({"cmd": "channel", "name": "proprio", "rates": rates})
+        self.fb_summary = self.fb.summary(rates)
 
     def _set(self, mode, key, why):
         self.mode, self.mode_t = mode, 0.0
@@ -236,7 +319,18 @@ class Body:
             "probe": {"kind": P["kind"], "t": round(P["t"], 2)} if P else None,
             "dust": self.dust_t > 0,
             "active": sorted(self.active),
+            "physics": self.physics_info(),
         }
+
+    def physics_info(self):
+        ph = self.phys
+        info = {"on": ph is not None, "available": physics_mod.available(), "error": self.phys_error,
+                "rhythms": self.rhythms, "feedback": self.fb.gain}
+        if ph is not None:
+            info.update({"ball_z": round(ph.ball_z, 4), "ball_q": [round(x, 5) for x in ph.ball_quat()],
+                         "cost": round(ph.cost, 2), "touch": self.sensed["touch"] if self.sensed else {},
+                         "senses": {k: v for k, v in self.fb_summary.items() if v > 0}})
+        return info
 
 
 INTERNAL = ("crop", "spiracle", "salivary_gland", "uterus", "eye", "unknown")

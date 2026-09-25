@@ -39,6 +39,7 @@ SAT_HZ = 80.0     # pool mean rate at which a muscle counts as fully active
 # ~5-20 Hz (the 200 Hz wingbeat comes from the muscles' own stretch activation)
 SAT_LOW = {"jump_ttm": 20.0, "dorsal_longitudinal": 15.0, "dorsoventral": 15.0}
 TAU_S = 0.03      # muscle activation time constant
+RATE_TAU_S = 0.06  # smoothing of each pool's firing-rate estimate (spikes are counted per 33 ms frame)
 
 LEGS = ["LF", "LM", "LH", "RF", "RM", "RH"]
 
@@ -195,6 +196,7 @@ class Motor:
         # kept as a hook for controls whose joints would saturate
         self.reach = {}
         self.value = {k: 0.0 for k in self.controls}
+        self.cocon = {k: 0.0 for k in self.controls}   # agonist + antagonist activation: how stiffly the joint is held
 
     # ------------------------------------------------------------------ per frame
     def update(self, spikes, dt):
@@ -205,7 +207,7 @@ class Motor:
         pk = pk[pk >= 0]
         counts = np.bincount(pk, minlength=self.P).astype(float)
         inst = counts / (self.size * dt)
-        a = 1.0 - np.exp(-dt / 0.06)
+        a = 1.0 - np.exp(-dt / RATE_TAU_S)
         self.rate += a * (inst - self.rate)
         target = np.minimum(1.0, self.rate / self.sat)
         b = 1.0 - np.exp(-dt / TAU_S)
@@ -214,12 +216,14 @@ class Motor:
             vp = float(self.act[pos].max()) if pos else 0.0
             vn = float(self.act[neg].max()) if neg else 0.0
             self.value[k] = vp - vn
+            self.cocon[k] = vp + vn
 
     def reset(self):
         self.rate[:] = 0
         self.act[:] = 0
         for k in self.value:
             self.value[k] = 0.0
+            self.cocon[k] = 0.0
 
     # ------------------------------------------------------------------ for the viewer
     def joints(self):
@@ -259,6 +263,20 @@ class Motor:
             "haltere": {s: round(v.get(f"haltere{s}", 0), 3) for s in "LR"},
             "abdomen": {"curl": round(v.get("abdomen.curl", 0), 3), "bend": round(v.get("abdomen.bend", 0), 3)},
         }
+
+    def muscles(self):
+        """For the physics body: per leg DOF, how stiffly it is held (0..1, from agonist + antagonist
+        activation), and per leg how hard the claws engage the pads (tarsus depressor / long tendon), which
+        switches the pads' adhesion on; lifting the leg peels it off."""
+        stiff, adhesion = {}, {}
+        for leg in LEGS:
+            for dof, terms in LEG_JOINTS.items():
+                stiff[(leg, dof)] = float(min(1.0, sum(self.cocon.get(f"{leg}.{c}", 0.0) for c, _ in terms)))
+            pos, _ = self.controls.get(f"{leg}.grip", ([], []))
+            claw = float(self.act[pos].max()) if pos else 0.0
+            lift = max(0.0, self.value.get(f"{leg}.lift", 0.0))
+            adhesion[leg] = float(min(1.0, 1.5 * claw) * max(0.0, 1.0 - 3.0 * lift))
+        return stiff, adhesion
 
     def summary(self):
         """Activation per body part (for glow and the panel)."""

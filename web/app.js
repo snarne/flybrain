@@ -528,6 +528,7 @@ fetch('api/body/pathways').then(r => r.json()).then(p => {
     return { row, el: d, bar: d.querySelector('i'), val: d.querySelector('.val') };
   });
 });
+const ballAvg = [0, 0];
 function onBody(b) {
   flyView?.onBody(b);
   const sk = b.skill;
@@ -541,7 +542,18 @@ function onBody(b) {
   if (s.bitter) bits.push(`bitter taste · ${s.bitter} Hz`);
   if (s.touch) bits.push(`antenna touch · ${s.touch} Hz`);
   for (const a of b.active || []) bits.push(`activating ${a.toUpperCase()}`);
+  const ph = b.physics || {};
+  if (ph.on) {
+    const feet = Object.values(ph.touch || {}).filter(Boolean).length;
+    // the ball's speed changes within every step: show a ~0.5 s average, like a ball tracker's readout
+    const [f0, t0] = b.ball || [0, 0];
+    ballAvg[0] += (f0 - ballAvg[0]) * 0.07;
+    ballAvg[1] += (t0 - ballAvg[1]) * 0.07;
+    const [fwd, turn] = ballAvg;
+    bits.push(`${feet}/6 feet on the ball · ball ${fwd >= 0 ? '+' : ''}${fwd.toFixed(1)} mm/s${Math.abs(turn) > 0.1 ? `, turning ${turn > 0 ? 'right' : 'left'} ${Math.abs(turn).toFixed(1)} rad/s` : ''}`);
+  }
   flySenses.textContent = bits.join('   ·   ');
+  setBodyOpts(ph);
   for (const p of pathRows) {
     if (p.row.kind === 'dn') {
       const hz = (b.rates || {})[p.row.key] || 0;
@@ -560,6 +572,21 @@ function onBody(b) {
 for (const el of viewFly.querySelectorAll('.experiments, .decision, .fly-hud'))
   for (const t of ['pointerdown', 'wheel']) el.addEventListener(t, e => e.stopPropagation());
 document.querySelectorAll('[data-exp]').forEach(btn => btn.onclick = () => send({ cmd: 'body', action: btn.dataset.exp, side: btn.dataset.side }));
+// body options: physics, leg feedback, built-in rhythms
+const bodyBtns = Object.fromEntries([...document.querySelectorAll('[data-body]')].map(b => [b.dataset.body, b]));
+let bodyOpts = {};
+function setBodyOpts(ph) {
+  bodyOpts = ph;
+  bodyBtns.physics.classList.toggle('on', !!ph.on);
+  bodyBtns.physics.disabled = !ph.available;
+  if (!ph.available) bodyBtns.physics.title = 'Needs the mujoco package (installed with the app); running the kinematic body';
+  bodyBtns.feedback.classList.toggle('on', !!ph.on && ph.feedback > 0);
+  bodyBtns.feedback.disabled = !ph.on;
+  bodyBtns.rhythms.classList.toggle('on', !!ph.rhythms);
+}
+bodyBtns.physics.onclick = () => send({ cmd: 'body', action: 'physics', on: !bodyOpts.on });
+bodyBtns.feedback.onclick = () => send({ cmd: 'body', action: 'feedback', gain: bodyOpts.feedback > 0 ? 0 : 1 });
+bodyBtns.rhythms.onclick = () => send({ cmd: 'body', action: 'rhythms', on: !bodyOpts.rhythms });
 let demoTimers = [];
 const demoBtn = document.getElementById('demo');
 function stopDemo() {
