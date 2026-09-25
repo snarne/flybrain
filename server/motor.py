@@ -17,7 +17,8 @@ Each control has the muscles that push it one way (+) and the other way (-).
 Mapping notes (approximate where the literature is thin, and said so in the UI):
 - Legs (Azevedo et al. 2024, Soler et al. 2004): thorax-coxa promotor/remotor and rotators swing the
   leg forward/back; trochanter flexors lift the femur, trochanter extensors (incl. the jump muscle,
-  tergotrochanter, whose motor neuron TTMn has its own pool) push it down; tibia flexors fold, the tibia extensor reaches; tarsus depressor and
+  tergotrochanter) push it down. The jump muscle's own motor neuron (TTMn) is kept out of the controls:
+  only the giant fibre fires it, for the escape jump; tibia flexors fold, the tibia extensor reaches; tarsus depressor and
   long tendon grip, the levator raises the tarsus.
 - Wings: indirect power muscles (DLM, DVM) set flight power; direct steering muscles (b1, b2 increase
   stroke amplitude; i1, i2, iii1-4 decrease it; ps, tp and b3 hold the wing in flight posture)
@@ -39,7 +40,7 @@ LEGS = ["LF", "LM", "LH", "RF", "RM", "RH"]
 # per-leg controls: (muscles for +, muscles for -)
 LEG_CONTROLS = {
     "swing": (["tergopleural_promotor", "sternal_anterior_rotator"], ["pleural_remotor_and_abductor", "sternal_posterior_rotator"]),
-    "lift": (["trochanter_flexor", "accessory_trochanter_flexor"], ["trochanter_extensor", "sternotrochanter_extensor", "tergotrochanter_extensor", "jump_ttm"]),
+    "lift": (["trochanter_flexor", "accessory_trochanter_flexor"], ["trochanter_extensor", "sternotrochanter_extensor", "tergotrochanter_extensor"]),
     "reach": (["tibia_extensor"], ["tibia_flexor", "accessory_tibia_flexor"]),
     "grip": (["tarsus_depressor", "long_tendon"], ["tarsus_levator"]),
     "spread": (["pleural_remotor_and_abductor"], ["sternal_adductor"]),
@@ -174,8 +175,13 @@ class Motor:
                 x = sum(g * v.get(f"{leg}.{c}", 0.0) for c, g in terms)
                 if dof in MIRRORED and leg[0] == "R":
                     x = -x
-                d[dof] = round(x, 4)
-            legs[leg] = d
+                d[dof] = x
+            # the jump muscle (tergotrochanter, TTMn) kicks the middle legs straight down
+            j = self.index.get(f"{leg}.jump_ttm")
+            if j is not None:
+                d["Femur"] += 1.3 * float(self.act[j])
+                d["Tibia"] -= 0.8 * float(self.act[j])
+            legs[leg] = {k: round(x, 4) for k, x in d.items()}
         wings = {s: {"power": round(max(v.get("wingL.power", 0), v.get("wingR.power", 0)), 3),
                      "extend": round(max(0.0, v.get(f"wing{s}.extend", 0)), 3),
                      "stroke": round(v.get(f"wing{s}.stroke", 0), 3)} for s in "LR"}

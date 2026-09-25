@@ -509,7 +509,11 @@ const flyMode = document.getElementById('fly-mode');
 const flySenses = document.getElementById('fly-senses');
 const MODE_TEXT = {
   rest: 'Resting', legs: 'Moving its legs', groom: 'Grooming its antennae', feed: 'Feeding: proboscis extended',
-  jump: 'Escape jump!', fly: 'Flying', skill: 'Skill',
+  jump: 'Escape jump!', fly: 'Flying', skill: 'Skill', reflex: 'Moving',
+};
+const REFLEX_TEXT = {
+  walk_forward: 'Walking forwards', walk_backward: 'Walking backwards', turn_left: 'Turning left',
+  turn_right: 'Turning right', groom_antennae: 'Grooming its antennae',
 };
 const pathEl = document.getElementById('pathways');
 let pathRows = [];
@@ -527,8 +531,9 @@ fetch('api/body/pathways').then(r => r.json()).then(p => {
 function onBody(b) {
   flyView?.onBody(b);
   const sk = b.skill;
-  flyMode.textContent = sk ? `${sk.kind === 'learn' ? 'Practising' : 'Doing'}: ${sk.name.replace(/_/g, ' ')}${sk.attempt ? ` (try ${sk.attempt})` : ''}` : (MODE_TEXT[b.mode] || b.mode);
-  flyMode.className = 'mode-badge ' + (sk ? 'skill' : b.mode);
+  flyMode.textContent = sk ? (sk.kind === 'reflex' ? REFLEX_TEXT[sk.name] || sk.name
+    : `${sk.kind === 'learn' ? 'Practising' : 'Doing'}: ${sk.name.replace(/_/g, ' ')}${sk.attempt ? ` (try ${sk.attempt})` : ''}`) : (MODE_TEXT[b.mode] || b.mode);
+  flyMode.className = 'mode-badge ' + (sk ? (sk.kind === 'reflex' ? (sk.name.startsWith('groom') ? 'groom' : 'legs') : 'skill') : b.mode);
   const s = b.senses || {};
   const bits = [];
   if (s.loom_left || s.loom_right) bits.push(`👁 looming ${s.loom_left ? 'left' : 'right'} eye · LPLC2 ${Math.max(s.loom_left || 0, s.loom_right || 0)} Hz`);
@@ -570,11 +575,9 @@ demoBtn.onclick = () => {
     send({ cmd: 'skill', action: 'stop' });
     return;
   }
-  const steps = [[0, 'reset'], [600, 'sugar'], [6000, 'loom', 'left'], [9500, 'bitter'], [14500, 'loom', 'right']];
+  const steps = [[0, 'reset'], [600, 'sugar'], [6000, 'loom', 'left'], [10000, 'bitter'], [15000, 'p9'], [18500, 'adn']];
   demoTimers = steps.map(([t, action, side]) => setTimeout(() => send({ cmd: 'body', action, side }), t));
-  const learned = [...document.querySelectorAll('#skill-list .skill-item')].length;
-  if (learned) demoTimers.push(setTimeout(() => document.querySelector('#skill-list .skill-item .btn')?.click(), 18000));
-  demoTimers.push(setTimeout(stopDemo, learned ? 21000 : 18000));
+  demoTimers.push(setTimeout(stopDemo, 22000));
   demoBtn.textContent = '■ Stop demo';
   demoBtn.classList.add('running');
 };
@@ -587,11 +590,11 @@ function renderSkills(list) {
   for (const s of list) {
     const d = document.createElement('div');
     d.className = 'skill-item';
-    d.innerHTML = `<div class="grow"><div class="t">${esc(s.name.replace(/_/g, ' '))}</div><div class="m">${esc(s.description)} · score ${(s.score ?? 0).toFixed(2)} · via ${esc(s.levels.join(', '))}${s.uses ? ` · used ${s.uses}×` : ''}</div></div>
-      <button class="btn" title="Do it">▶</button><button class="link" title="Forget this skill">×</button>`;
+    d.innerHTML = `<div class="grow"><div class="t">${esc(s.name.replace(/_/g, ' '))}${s.builtin ? ' <span class="tag">built in</span>' : ''}</div><div class="m">${esc(s.description)} · score ${(s.score ?? 0).toFixed(2)} · via ${esc(s.levels.join(', '))}${s.uses ? ` · used ${s.uses}×` : ''}</div></div>
+      <button class="btn" title="Do it">▶</button>${s.builtin ? '' : '<button class="link" title="Forget this skill">×</button>'}`;
     const [play, forget] = d.querySelectorAll('button');
     play.onclick = () => send({ cmd: 'skill', action: 'play', name: s.name });
-    forget.onclick = () => { if (confirm(`Forget “${s.name}”?`)) send({ cmd: 'skill', action: 'forget', name: s.name }); };
+    if (forget) forget.onclick = () => { if (confirm(`Forget “${s.name}”?`)) send({ cmd: 'skill', action: 'forget', name: s.name }); };
     skillList.append(d);
   }
 }
@@ -599,6 +602,7 @@ fetch('api/skills').then(r => r.json()).then(r => renderSkills(r.skills));
 const LEVEL_SHORT = { descending: 'descending', premotor: 'premotor', motor: 'motor neuron' };
 function onSkill(m) {
   if (m.type === 'skills') return renderSkills(m.skills);
+  if (m.kind === 'reflex') { if (m.event === 'run') highlightNeurons(m.neurons, m.duration + 0.3); return; }
   if (m.event === 'search') {
     skillLive.hidden = false;
     skillLive.innerHTML = `<div class="t"><span class="spinner"></span> Learning “${esc(m.name.replace(/_/g, ' '))}”: searching the wiring for neurons to drive…</div>`;

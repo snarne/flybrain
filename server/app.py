@@ -74,6 +74,7 @@ class World:
         self.ro_fast = np.zeros(len(self.readouts))
         # motor neurons -> muscles -> joints
         self.motor = motor_mod.Motor(self)
+        self.skill_driven = np.zeros(self.N, bool)
         self.csc = None  # incoming-connection index, built in the background for explain()
         # user-controlled state
         self.active_presets = {}      # key -> Hz
@@ -161,6 +162,10 @@ class World:
             for i, r in ch.items():
                 rates[i] = max(rates.get(i, 0.0), r)
         self.brain.set_stim(rates)
+        # neurons a skill is driving don't count as the brain's own commands (no feedback loops)
+        self.skill_driven[:] = False
+        if self.channel_stim.get("skill"):
+            self.skill_driven[list(self.channel_stim["skill"])] = True
 
     def neurons_of_type(self, t):
         names = self.tables["type"]
@@ -180,7 +185,7 @@ class World:
         self.sim_ratio = 0.8 * self.sim_ratio + 0.2 * (sim_ms / 1000.0) / max(el, 1e-6)
         t = self.brain.t_ms
         reg = np.bincount(self.region[spk], minlength=self.n_regions)
-        ro = self.readout_of[spk]
+        ro = self.readout_of[spk[~self.skill_driven[spk]]]
         ro = np.bincount(ro[ro >= 0], minlength=len(self.readouts))
         a = np.exp(-sim_ms / 60.0)  # ~60 ms smoothing for the body's motor readout
         self.ro_fast = a * self.ro_fast + (1 - a) * ro / self.ro_sizes / (sim_ms / 1000.0)
@@ -388,13 +393,14 @@ async def explain_events():
     """Turn the body's behaviour changes into 'why did it do that' traces through the connectome."""
     loop = asyncio.get_running_loop()
     text = {"jump": "Escape jump", "fly": "Flight", "feed": "Proboscis extension (feeding)", "groom": "Antennal grooming",
-            "legs": "Leg movement"}
+            "legs": "Leg movement", "walk_forward": "Walking forwards", "walk_backward": "Walking backwards",
+            "turn_left": "Turning left", "turn_right": "Turning right", "groom_antennae": "Antennal grooming"}
 
     while True:
         await asyncio.sleep(0.05)
         while body.events:
             ev = body.events.pop(0)
-            if skills.state:            # a skill is driving the body: its drivers are the explanation
+            if skills.state and skills.state["kind"] != "reflex":   # a skill the agent asked for: its drivers are the explanation
                 continue
             try:
                 r = await loop.run_in_executor(None, world.explain, ev["key"])

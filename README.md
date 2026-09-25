@@ -112,22 +112,33 @@ Every frame, in simulated time:
    muscles extend the proboscis; the pharyngeal muscles pump. Nothing is animated by hand except the
    wingbeat waveform itself (a 200 Hz oscillation of the flight muscles, shown slowed down).
 
-What the wiring produces on its own, checked with `tools/validate.py`:
+What the wiring produces, checked live and with `tools/validate.py`:
 
 | Input | What happens | Pathway (traced live) |
 |---|---|---|
-| Sugar on the proboscis | proboscis extends and stays out (MN9 ~33 Hz) | sugar taste neurons → ... → MN9 |
-| Sugar + bitter | feeding suppressed (MN9 ~5 Hz) | bitter neurons inhibit the feeding pathway |
-| Threat from one side | escape jump, then a burst of flight | LPLC2 → giant fibre → jump motor neuron (TTMn); LPLC2 → DNp06 → wing power motor neurons |
-| Odours, heat, cold, humidity | the brain responds (antennal lobe, lateral horn, a few descending neurons such as DNb05 for heat), but no movement: none of these makes a fly on a ball take off | |
-| Antenna dust, "walk" and "groom" command neurons | only twitches | see below |
+| Sugar on the proboscis | proboscis extends and stays out | sugar taste neurons → ... → MN9 |
+| Sugar + bitter | feeding suppressed | bitter neurons inhibit the feeding pathway |
+| Threat from either side | escape jump, a burst of wingbeats, then backing away | LPLC2 → giant fibre → jump motor neuron (TTMn); LPLC2 → DNp06 → wing power motor neurons; Moonwalker neurons → walking backwards |
+| Activate P9 / MDN / DNa02 / aDN | walks forwards / backwards / turns / grooms its antennae | the command neurons you drove, with the rhythm from a built-in skill (below) |
+| Heat or cold | turns and walks (thermal avoidance); the flight muscles' motor neurons fire, but it stays on the ball | hot/cool sensors → VP2/VP3 projection neurons → DNb05 → DNp31 |
+| Odours, humidity | the brain responds (antennal lobe, lateral horn, mushroom body), the body stays still | |
+| Antenna dust | leg twitches only; the touch → grooming pathway is too weak in this wiring to reach the aDN command neurons | |
 
-Two things to know. First, the giant fibre drives the jump motor neuron through gap junctions,
-which an electron-microscopy connectome cannot see; those few known electrical synapses (giant fibre
-→ TTMn and PSI) are added by hand, and marked as such. Second, walking and grooming don't emerge:
-their rhythms come from nerve-cord circuits whose ion-channel dynamics a leaky integrate-and-fire
-model doesn't have, so driving the command neurons (P9, MDN, aDN) only gives twitches. Those are
-exactly the movements to teach as skills.
+Three things to know:
+
+- **Gap junctions.** The giant fibre drives the jump motor neuron mainly through electrical synapses,
+  which an electron-microscopy connectome cannot see. Those few known ones (giant fibre → TTMn and
+  PSI) are added by hand, and marked as such.
+- **Feet on the ball stop flight.** In real flies, tarsal contact inhibits flight. The body follows
+  that rule: the wings only beat after the giant-fibre jump has lifted the legs off, for as long as
+  the flight power motor neurons keep firing.
+- **Rhythms come from built-in skills.** Stepping and grooming rhythms are made by nerve-cord
+  circuits whose ion-channel dynamics a leaky integrate-and-fire model doesn't have, so the command
+  neurons alone only give twitches. The app ships five skills learned by the skill engine (below) on
+  this same connectome: walking forwards and backwards, turning left and right, and antennal
+  grooming (`server/data/skills_builtin.json`). When the brain's own command neurons for one of
+  them fire (P9 or DNg97, MDN, DNa01/DNa02, aDN), the body replays that skill's neuron drive as the
+  rhythm. Neurons driven by a skill don't count as commands, so a skill can't trigger itself.
 
 The **Why?** card appears whenever the body starts a behaviour. It starts at the motor neurons (or
 command neurons) involved and walks backwards through the wiring: at each step, the cell type sending
@@ -159,7 +170,8 @@ hi"). It works like this (`server/skills.py`):
    git): the driver neurons (with their BANC ids), their firing schedule, the plan and the score.
 
 After that, `do_skills` just replays the stored drive: no search, no practice. To type a word, Fly
-learns one small tap skill per leg once, then chains them.
+learns one small tap skill per leg once, then chains them. The built-in walking, turning and grooming
+skills are listed too, and Fly can use them like its own.
 
 This is the same idea as the KV cache, one level down: work that is expensive the first time is
 kept and reused. And the skill list is deliberately not in the LLM's system prompt. Every new skill
@@ -319,6 +331,8 @@ it against real flies on the FlyWire brain. Here it runs on BANC's brain and ner
   burst at input onset from igniting thousands of neurons for a moment, which would otherwise twitch
   the wings and legs whenever any smell or temperature change arrived. With both, every input goes
   quiet within half a second of being switched off, and the behaviours in the table above hold.
+  Only interneurons are eligible: sensory, descending and motor neurons carry the signals in and out,
+  and slowing them would blunt the behaviours themselves.
   **No adaptation** (the other mode) is the plain model.
 
 Speed: an exact event-driven scheme. A neuron whose voltage and input are both below threshold
@@ -372,7 +386,8 @@ server/body.py         stimuli -> sensory neurons; what the body is doing
 server/skills.py       learning new movements: wiring search, practice, skill library
 server/agent/          the AI: runtime.py (llama.cpp setup), models.py, llm.py, system1.py (Laya),
                        agent.py (loop, conversations, KV cache), tools.py, bridge.py (body link)
-server/data/           neuron labels and signs, senses, readouts, motor pools, loop-neuron mask
+server/data/           neuron labels and signs, senses, readouts, motor pools, loop-neuron mask,
+                       built-in skills (skills_builtin.json)
 web/                   the 3D viewer (three.js, bundled); web/fly.js is the 3D fly, web/chat.js the chat
 web/data/fly_body.*    the fly's meshes, skeleton and resting pose (from NeuroMechFly)
 tools/fetch_banc.sh    downloads the BANC annotation files build_banc.py needs

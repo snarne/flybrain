@@ -22,6 +22,12 @@ proboscis). Learning it the first time:
      and rates, the plan and the score.
 
 Doing a known skill is then just replaying the saved drive: no search, no practice.
+
+Built-in skills (server/data/skills_builtin.json, learned the same way and shipped with the app):
+walking forwards and backwards, turning, antennal grooming. A leaky integrate-and-fire nerve cord
+can't generate stepping or grooming rhythms by itself (real ones rely on ion-channel dynamics the
+model doesn't have), so when the brain's command neurons for these behaviours fire (P9, MDN, DNa02,
+aDN), the body replays the matching built-in skill as the rhythm. It is labelled as such in the UI.
 """
 import asyncio
 import json
@@ -32,6 +38,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 STORE = ROOT / "data" / "skills" / "skills.json"
+BUILTIN = ROOT / "server" / "data" / "skills_builtin.json"
 BIN_S = 0.02            # time resolution of targets and drive schedules
 BASE_HZ = 150.0         # drive at full activation, gain 1
 MAX_HZ = 400.0
@@ -51,6 +58,10 @@ class SkillEngine:
         self.m = motor
         self.emit = emit
         self.lib = self._load()
+        try:
+            self.builtin = json.loads(BUILTIN.read_text())
+        except Exception:
+            self.builtin = {}
         self.E = None                     # influence matrix (N x channels), built on first use
         self.state = None                 # the movement being practised or performed
         self.done = None                  # asyncio.Event for the current run
@@ -85,10 +96,17 @@ class SkillEngine:
         tmp.write_text(json.dumps(self.lib, indent=1))
         tmp.replace(STORE)
 
+    def get(self, name):
+        return self.lib.get(name) or self.builtin.get(name)
+
     def list(self):
-        return [{"name": k, "description": v.get("description", ""), "score": v.get("score"),
-                 "duration": v.get("duration"), "learned": v.get("learned"), "uses": v.get("uses", 0),
-                 "levels": sorted({d["level"] for d in v.get("drivers", [])})} for k, v in sorted(self.lib.items())]
+        out = []
+        for builtin, lib in ((False, self.lib), (True, self.builtin)):
+            out += [{"name": k, "description": v.get("description", ""), "score": v.get("score"),
+                     "duration": v.get("duration"), "learned": v.get("learned"), "uses": v.get("uses", 0),
+                     "builtin": builtin, "levels": sorted({d["level"] for d in v.get("drivers", [])})}
+                    for k, v in sorted(lib.items()) if not (builtin and k in self.lib)]
+        return out
 
     def forget(self, name):
         if self.lib.pop(name, None) is not None:
@@ -273,6 +291,21 @@ class SkillEngine:
             self.state = None
             self.done.set()
 
+    def reflex(self, name):
+        """Play a skill as the body's own rhythm (e.g. walking when P9 fires). Non-blocking; skipped if a
+        movement is already running."""
+        if self.busy or self.state:
+            return False
+        sk = self.get(name)
+        if not sk:
+            return False
+        duration, tracks = self.parse_plan(sk["plan"])
+        drivers = [dict(d, neurons=list(d["neurons"]), rates=list(d["rates"]), level_i=LEVELS.index(d["level"]))
+                   for d in sk["drivers"]]
+        self.start("reflex", name, drivers, tracks, duration)
+        self.state["duration"] = duration          # no settling pause: the next cycle follows straight on
+        return True
+
     def stop(self):
         if self.state:
             self.state["t"] = self.state["duration"]
@@ -364,10 +397,15 @@ class SkillEngine:
         return changed
 
     # ------------------------------------------------------------------ public API (async)
+    async def _wait_reflex(self):
+        while self.state and self.state["kind"] == "reflex":
+            await asyncio.sleep(0.05)
+
     async def learn(self, name, description, plan, attempts=8):
         if self.busy:
             return {"ok": False, "error": "busy with another movement"}
         self.busy = True
+        await self._wait_reflex()
         try:
             duration, tracks = self.parse_plan(plan)
             t0 = time.time()
@@ -424,15 +462,17 @@ class SkillEngine:
     async def perform(self, names, repeat=1):
         if self.busy:
             return {"ok": False, "error": "busy with another movement"}
-        missing = [n for n in names if n not in self.lib]
+        missing = [n for n in names if not self.get(n)]
         if missing:
-            return {"ok": False, "error": f"not learned yet: {missing}. Learn them first.", "known": sorted(self.lib)}
+            return {"ok": False, "error": f"not learned yet: {missing}. Learn them first.",
+                    "known": sorted(set(self.lib) | set(self.builtin))}
         self.busy = True
+        await self._wait_reflex()
         try:
             done = []
             for _ in range(max(1, min(int(repeat or 1), 20))):
                 for name in names:
-                    sk = self.lib[name]
+                    sk = self.get(name)
                     duration, tracks = self.parse_plan(sk["plan"])
                     drivers = [dict(d, neurons=list(d["neurons"]), rates=list(d["rates"]), level_i=LEVELS.index(d["level"]))
                                for d in sk["drivers"]]

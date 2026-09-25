@@ -19,11 +19,20 @@ import connectome, sim  # noqa: E402
 
 ip, ix, w = connectome.load()
 presets = json.load(open(ROOT / "server/data/presets.json"))
+tables = json.load(open(ROOT / "server/data/tables.json"))
+nz = np.load(ROOT / "server/data/neurons.npz")
+sup = np.array(tables["super_class"])[nz["sup"]]
+# Only interneurons can be loop neurons. Sensory, descending, ascending and motor neurons carry the
+# signals in and out; slowing them would blunt the behaviours themselves (e.g. the giant fibre's
+# escape), and they only kept firing in the probes because they were driven directly or sit downstream.
+eligible = ~np.isin(sup, ["sensory", "descending", "ascending", "motor", "sensory_ascending", "sensory_descending",
+                          "visceral_circulatory", "ascending_visceral_circulatory"])
 # inputs to probe: every sense, plus the descending neurons behind each behaviour readout (the nerve
 # cord has its own self-exciting loops that only show up when it is driven from the brain)
 probes = [(s["key"], s["neurons"]) for s in presets["stimuli"]] + [(r["key"], r["neurons"]) for r in presets["readouts"]]
 b = sim.Brain(ip, ix, w, mode="stable")
-loop = np.zeros(b.N, bool)
+prev = ROOT / "server/data/loop_neurons.npy"
+loop = (np.load(prev) & eligible) if prev.exists() else np.zeros(b.N, bool)   # resume from the last run
 for it in range(10):
     b.ad_scale[:] = loop
     b.dep_mask[:] = loop
@@ -39,7 +48,7 @@ for it in range(10):
                 b.step(25)
             c = np.bincount(np.concatenate([b.step(25).copy() for _ in range(24)]), minlength=b.N)
             if c.sum() > 50:
-                new |= c > 0
+                new |= (c > 0) & eligible
     added = new & ~loop
     print(f"pass {it}: persistent {new.sum()}, new {added.sum()}", flush=True)
     if not added.any():

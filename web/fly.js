@@ -223,7 +223,7 @@ export async function createFlyView(dom) {
     // wings: posture from the steering/posture muscles, beat from the power muscles
     const W = J?.wings || { L: {}, R: {} };
     const power = sm('power', W.L?.power || 0, Math.min(1, dt * 6));
-    const beating = power > 0.12;
+    const beating = !!st.airborne && power > 0.12;   // feet on the ball inhibit flight (tarsal reflex)
     wingPhase += dt * 2 * Math.PI * (beating ? 7 + 5 * Math.min(1, power) : 0);   // shown ~25x slower than 200 Hz
     for (const side of ['L', 'R']) {
       const w = W[side] || {};

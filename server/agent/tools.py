@@ -286,15 +286,15 @@ class ToolRunner:
         lst = eng.list()
         if not lst:
             return "No skills learned yet. Use learn_skill to teach one.", True, {}
-        return "\n".join(f"- {s['name']}: {s['description']} ({s['duration']:.2f} s, score {s['score']:.2f}, "
-                         f"driven via {', '.join(s['levels'])}, used {s['uses']}x)" for s in lst), True, {}
+        return "\n".join(f"- {s['name']}{' (built in)' if s['builtin'] else ''}: {s['description']} ({s['duration']:.2f} s, "
+                         f"score {s['score']:.2f}, driven via {', '.join(s['levels'])}, used {s['uses']}x)" for s in lst), True, {}
 
     async def t_learn_skill(self, name, description, keyframes, duration=None):
         eng = getattr(self.world, "skills", None)
         if eng is None:
             return "The body isn't running.", False, {}
-        if name in eng.lib:
-            return f"'{name}' is already learned (score {eng.lib[name]['score']}). Use do_skills, or pick another name.", True, {}
+        if eng.get(name):
+            return f"'{name}' is already learned (score {eng.get(name)['score']}). Use do_skills, or pick another name.", True, {}
         r = await eng.learn(name, description, {"duration": duration, "keyframes": keyframes})
         if not r.get("ok"):
             return f"Couldn't learn it: {r.get('error')}", False, {}

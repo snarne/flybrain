@@ -333,3 +333,4 @@ body.chat-open #inspector { width: 440px; }
 .custom-model input { width: 100%; background: #151922; border: 1px solid var(--line-2); border-radius: 8px; padding: 5px 8px; margin: 3px 0; min-width: 0; }
 .cm-row { display: flex; gap: 6px; align-items: center; }
 .cm-row input { flex: 1; }
+.skill-item .tag { font-size: 10px; font-weight: 600; color: var(--faint); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 4px; margin-left: 4px; }

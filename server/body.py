@@ -14,6 +14,13 @@ Like a real neuroscience rig, the fly is held over a floating ball. Every frame,
 
 The label on screen ("Feeding", "Escape jump", ...) is read from what the muscles are doing, with
 some hysteresis so a brief twitch doesn't flip it back and forth.
+
+Two rules from fly physiology the connectome alone doesn't give:
+- Flight needs the feet off the ground. Tarsal contact inhibits flight, so a fly standing on the ball
+  doesn't beat its wings even if the flight power muscles' motor neurons fire; the giant-fibre jump
+  lifts the legs off and flight can start.
+- Rhythms: walking and grooming need nerve-cord rhythm generators the model lacks. When the brain's
+  command neurons for them fire, the matching built-in skill supplies the rhythm (skills.py).
 """
 import math
 
@@ -55,6 +62,8 @@ class Body:
         self._pending, self._pending_t = None, 0.0
         self._swing = {}
         self.joints, self.parts = {}, {}
+        self.airborne, self.air_t = False, 0.0
+        self._reflex = None
         self.loom = None          # {"side", "d"} distance in mm
         self.probe = None         # {"kind", "t"}
         self.dust_t = 0.0
@@ -122,10 +131,35 @@ class Body:
                 self.w.pending.append({"cmd": "channel", "name": name, "neurons": neurons, "rate": rate})
 
     # ------------------------------------------------------------ 3. what is the body doing?
+    REFLEX = {  # built-in skill played while these command neurons fire: (readout, threshold Hz)
+        "walk_forward": "Walking forwards", "walk_backward": "Walking backwards", "turn_left": "Turning left",
+        "turn_right": "Turning right", "groom_antennae": "Grooming its antennae"}
+
+    def _reflex_for(self, r):
+        fwd, back, groom = r.get("forward", 0), r.get("backward", 0), r.get("groom", 0)
+        steer = r.get("turn_l", 0) - r.get("turn_r", 0)
+        if groom > 6:
+            return "groom_antennae", "groom", f"aDN grooming command neurons at {groom:.0f} Hz"
+        if abs(steer) > 20 and abs(steer) >= max(fwd, back):
+            side = "left" if steer > 0 else "right"
+            return f"turn_{side}", "turn_l" if steer > 0 else "turn_r", f"DNa01/DNa02 {side} steering neurons ahead by {abs(steer):.0f} Hz"
+        if max(fwd, back) > 10:
+            if fwd >= back:
+                return "walk_forward", "forward", f"P9/DNg97 walking command neurons at {fwd:.0f} Hz"
+            return "walk_backward", "backward", f"Moonwalker neurons (MDN) at {back:.0f} Hz"
+        return None
+
     def act(self, dt, motor, r, skill=None):
         """motor: motor.Motor (updated this frame); r: behaviour readouts (Hz, ~60 ms smoothing)."""
         self.rates = r
         v = motor.value
+        eng = getattr(self.w, "skills", None)
+        rx = self._reflex_for(r)
+        if rx and eng is not None and not eng.state and not eng.busy and eng.get(rx[0]):
+            if not (self.mode == "reflex" and self._reflex == rx[0]):
+                self.events.append({"event": rx[0], "key": rx[1], "why": rx[2]})
+            self._reflex = rx[0]
+            eng.reflex(rx[0])
         legs = ("LF", "LM", "LH", "RF", "RM", "RH")
         leg_act = {leg: max(abs(v.get(f"{leg}.{c}", 0)) for c in ("swing", "lift", "reach", "grip")) for leg in legs}
         power = max(v.get("wingL.power", 0), v.get("wingR.power", 0))
@@ -133,22 +167,30 @@ class Body:
         jump = float(motor.act[ttm].max()) if ttm else 0.0
         cands = [
             # label, key for the "why" trace, condition, text
-            ("jump", "escape", jump > 0.3, f"jump muscle motor neuron (TTMn) driven by the giant fibre ({r.get('escape', 0):.0f} Hz)"),
+            ("jump", "escape", jump > 0.3 and r.get("escape", 0) > 20, f"jump muscle motor neuron (TTMn) driven by the giant fibre ({r.get('escape', 0):.0f} Hz)"),
             ("fly", "wing.dorsal_longitudinal.L", power > 0.3, "wing power motor neurons (DLM/DVM) firing"),
             ("feed", "proboscis.proboscis_m9.L", v.get("proboscis.rostrum", 0) > 0.25, "MN9 extends the proboscis"),
             ("groom", "groom", r.get("groom", 0) > 5 and max(leg_act["LF"], leg_act["RF"]) > 0.2, f"aDN grooming neurons at {r.get('groom', 0):.0f} Hz, front legs moving"),
             ("legs", None, max(leg_act.values()) > 0.25, "leg motor neurons firing"),
         ]
+        # flight: only once the feet are off the ball (after a jump), and while the power muscles stay on
+        if jump > 0.3 and r.get("escape", 0) > 20:     # a giant-fibre jump lifts the feet off the ball
+            self.airborne, self.air_t = True, 0.0
+        elif self.airborne:
+            self.air_t = self.air_t + dt if power < 0.2 else 0.0
+            if self.air_t > 0.4:
+                self.airborne = False
+        cands[1] = ("fly", cands[1][1], self.airborne and power > 0.3, cands[1][3])
         want = next(((lab, key, why) for lab, key, cond, why in cands if cond), ("rest", None, ""))
         if skill:
-            want = ("skill", None, "")
+            want = ("reflex", None, "") if skill.get("kind") == "reflex" else ("skill", None, "")
         # hysteresis: a new behaviour must hold for 0.1 s to show, the old one must be gone for 0.5 s
         if want[0] != self.mode:
             self._pending_t = self._pending_t + dt if self._pending == want[0] else dt
             self._pending = want[0]
             order = [c[0] for c in cands]
             stronger = self.mode == "rest" or (want[0] in order and self.mode in order and order.index(want[0]) < order.index(self.mode))
-            need = 0.1 if (stronger or want[0] == "skill") else 0.5
+            need = 0.1 if (stronger or want[0] in ("skill", "reflex")) else 0.5
             if self._pending_t >= need:
                 if want[0] == "legs":
                     key = max((f"{leg}.{c}" for leg in legs for c in ("swing", "lift", "reach", "grip")), key=lambda k: abs(v.get(k, 0)))
@@ -179,7 +221,7 @@ class Body:
     def state(self, skill=None):
         L, P = self.loom, self.probe
         return {
-            "type": "body", "mode": self.mode, "skill": skill,
+            "type": "body", "mode": self.mode, "skill": skill, "airborne": self.airborne,
             "joints": self.joints, "parts": self.parts, "ball": [round(b, 3) for b in self.ball],
             "rates": {k: round(v, 1) for k, v in self.rates.items() if v >= 0.5},
             "senses": {k: round(v) for k, v in self.senses.items() if v},
