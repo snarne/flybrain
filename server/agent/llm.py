@@ -1,5 +1,6 @@
 """Streaming client for an OpenAI-compatible chat server (llama-server, or any other via external_url)."""
 import json
+import os
 
 import httpx
 
@@ -28,9 +29,11 @@ class LLM:
             "stream_options": {"include_usage": True},
         }
         headers = {}
-        if cfg.get("external_api_key"):
-            headers["Authorization"] = f"Bearer {cfg['external_api_key']}"
-        if cfg.get("external_url") and (cfg.get("external_api_key") or cfg.get("external_strict")):
+        # API key: from the app/llm_config.json, or (so it never has to be written down) the environment
+        key = cfg.get("external_api_key") or os.environ.get("FLYBRAIN_API_KEY") if cfg.get("external_url") else None
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        if cfg.get("external_url") and (key or cfg.get("external_strict")):
             # hosted APIs reject llama.cpp's extra parameters: send only the standard ones
             body.update(temperature=samp["temperature"], top_p=samp["top_p"])
         else:

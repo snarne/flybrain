@@ -14,6 +14,7 @@ KV caching, three layers:
 import asyncio
 import json
 import platform
+import re
 import sys
 import time
 import uuid
@@ -26,6 +27,38 @@ ROOT = Path(__file__).resolve().parents[2]
 CONV_DIR = ROOT / "data" / "conversations"
 MAX_STEPS = 16
 
+# For models or servers without native tool calling: the tools are described in the prompt and the
+# model writes each call as a fenced block, which is parsed here. Chosen automatically when a server
+# rejects tools, or set "tool_mode": "prompt" in llm_config.json.
+TOOL_BLOCK = re.compile(r"```tool\s*(\{.*?\})\s*```", re.S)
+
+
+def tool_prompt():
+    lines = ["You can use tools. To call one, write a fenced block exactly like this, one block per call, and "
+             "then stop and wait for the result:",
+             "```tool", '{"name": "tool_name", "arguments": {"arg": "value"}}', "```",
+             "The result comes back in the next message. Available tools (JSON Schema for the arguments):"]
+    for t in TOOLS:
+        f = t["function"]
+        lines.append(f"- {f['name']}: {f['description']} Arguments: {json.dumps(f['parameters'])}")
+    return "\n".join(lines)
+
+
+def as_prompt_tools(messages):
+    """Rewrite native tool-call history into plain messages, for servers without tool support."""
+    out = []
+    for m in messages:
+        if m["role"] == "assistant" and m.get("tool_calls"):
+            blocks = "\n".join("```tool\n" + json.dumps({"name": c["function"]["name"],
+                                                          "arguments": json.loads(c["function"]["arguments"] or "{}")})
+                               + "\n```" for c in m["tool_calls"])
+            out.append({"role": "assistant", "content": ((m.get("content") or "") + "\n" + blocks).strip()})
+        elif m["role"] == "tool":
+            out.append({"role": "user", "content": f"[tool result]\n{m['content']}"})
+        else:
+            out.append({k: v for k, v in m.items() if k in ("role", "content")})
+    return out
+
 SYSTEM_PROMPT = f"""You are Fly, an AI assistant whose body is a simulated fruit fly: its whole central nervous system (166,029 neurons of the BANC brain-and-nerve-cord connectome, including the motor neurons that move its legs, wings, head and proboscis), running live next to you and shown to the user in 3D with the fly body it moves.
 
 How you work: a fast "System 1" model (Laya) makes a snap judgement about each message, then you (the "System 2" language model) do the talking, reasoning, system design and coding. Your conversation drives chosen neurons in the fly (hearing activates its auditory neurons, your deliberation drives its central complex, recalled memories drive Kenyon cells, successes taste sweet and failures bitter). Be honest about this if asked: the fly brain does not do your reasoning; it is your body, and its responses come from its real wiring.
@@ -35,7 +68,7 @@ You can:
 - Design systems: state requirements and constraints, compare options with their trade-offs, then recommend one.
 - Write and run code in your workspace folder with the file tools and run_command. Work in small steps: write the code, run it, read the output, fix, and run again until it works. Prefer Python unless asked otherwise. Commands need the user's approval; explain briefly what you want to run.
 - Use your body with body_experiment (your tethered fly body: threats, tastes, dust, activating neurons; the user watches it move in 3D), stimulate_senses and brain_status, and answer questions about which neurons fire. When asked to show or explain a behaviour, run body_experiment and explain the traced pathway.
-- Your body can learn new movements. When asked to do a movement (typing, waving, tapping...), first call list_skills; reuse learned skills with do_skills; only if something is missing, plan it as keyframes and learn_skill it once (break it into small reusable skills, e.g. one tap per leg), then chain with do_skills. Report which neurons the engine found and how well the practice went.
+- Your body can learn new movements. When asked to do a movement (typing, waving, tapping...), first call list_skills; reuse learned skills with do_skills; only if something is missing, read motor_reference, plan it as keyframes with realistic fly timing, and learn_skill it once (break it into small reusable skills, e.g. one tap per leg), then chain with do_skills. Compare the planned vs achieved timeline it returns and use refine_skill if a control lags or overshoots. Report which neurons the engine found and how well the practice went.
 - Keep notes across conversations with remember and recall.
 
 Environment: {platform.system()} ({platform.machine()}), shell {SHELL}, workspace folder {WORKSPACE}. Paths in tools are relative to the workspace.
@@ -95,6 +128,7 @@ class Agent:
         self.conv = None
         self.kv_loaded_for = None
         self.ctx = None                # (model key, n_ctx)
+        self.no_native_tools = set()   # models whose server rejected native tool calls
         self.last_used = 0             # tokens in context after the last reply
         convs = Conversation.list_all()
         self.conv = Conversation.load(convs[0]["id"]) if convs else Conversation()
@@ -285,11 +319,34 @@ class Agent:
                   "finish": final.get("finish_reason")})
         return msg, calls, final
 
+    def _prompt_tools(self):
+        mode = self.rt.cfg.get("tool_mode") or "auto"
+        return mode == "prompt" or (mode == "auto" and self.rt.model_key in self.no_native_tools)
+
     async def _stream_live(self, sid, messages, thinking, mode, max_tokens):
         """Streams to the UI and yields one tuple (reasoning, content, calls, final) at the end."""
+        prompt_tools = self._prompt_tools()
+        if prompt_tools:
+            messages = [{"role": "system", "content": messages[0]["content"] + "\n\n" + tool_prompt()}] + as_prompt_tools(messages[1:])
+        try:
+            async for item in self._stream_once(sid, messages, thinking, mode, max_tokens, None if prompt_tools else TOOLS):
+                yield item
+        except RuntimeError as e:
+            # the server doesn't do native tool calling: switch this model to tools-in-the-prompt and retry
+            msg = str(e).lower()
+            if not prompt_tools and "tool" in msg and any(w in msg for w in ("support", "not", "invalid", "unknown", "400")):
+                self.no_native_tools.add(self.rt.model_key)
+                self._ui({"kind": "notice", "text": "This model's server doesn't support tool calling; Fly will describe its "
+                          "tools in the prompt instead (works with any model, a little less reliably)."})
+                async for item in self._stream_live(sid, messages, thinking, mode, max_tokens):
+                    yield item
+            else:
+                raise
+
+    async def _stream_once(self, sid, messages, thinking, mode, max_tokens, tools):
         reasoning, content, calls, final = "", "", [], {}
         n_reason = 0
-        async for kind, payload in self.llm.stream(messages, tools=TOOLS, thinking=thinking, mode=mode,
+        async for kind, payload in self.llm.stream(messages, tools=tools, thinking=thinking, mode=mode,
                                                    max_tokens=max_tokens):
             if kind == "reasoning":
                 reasoning += payload
@@ -306,6 +363,14 @@ class Agent:
                 calls = payload
             elif kind == "done":
                 final = payload
+        if tools is None:
+            for k, mt in enumerate(TOOL_BLOCK.finditer(content)):
+                try:
+                    j = json.loads(mt.group(1))
+                    calls.append({"id": f"call_{sid}_p{k}", "name": j.get("name", ""),
+                                  "arguments": json.dumps(j.get("arguments") or {})})
+                except json.JSONDecodeError:
+                    pass
         yield reasoning, content, calls, final
 
     async def _call_tool(self, call):

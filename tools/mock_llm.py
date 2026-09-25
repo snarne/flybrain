@@ -11,12 +11,13 @@ else gets a short echo reply.
 """
 import asyncio
 import json
+import os
 import time
 import uuid
 
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 app = FastAPI()
 kv = {"text": ""}          # what the fake KV cache currently holds
@@ -29,10 +30,17 @@ def flat(messages):
 
 def plan(messages, thinking):
     last = messages[-1]
-    user = next(m["content"] for m in reversed(messages) if m["role"] == "user").lower()
-    if last["role"] == "tool":
-        prev_call = next(m for m in reversed(messages) if m["role"] == "assistant" and m.get("tool_calls"))
-        name = prev_call["tool_calls"][0]["function"]["name"]
+    user = next(m["content"] for m in reversed(messages)
+                if m["role"] == "user" and not m["content"].startswith("[tool result]")).lower()
+    prompt_result = last["role"] == "user" and last["content"].startswith("[tool result]")
+    if last["role"] == "tool" or prompt_result:
+        if prompt_result:   # tools-in-the-prompt mode: the call is a ```tool block in the previous reply
+            prev = next(m for m in reversed(messages) if m["role"] == "assistant")
+            name = json.loads(prev["content"].split("```tool", 1)[1].split("```", 1)[0])["name"]
+            last = {"content": last["content"]}
+        else:
+            prev_call = next(m for m in reversed(messages) if m["role"] == "assistant" and m.get("tool_calls"))
+            name = prev_call["tool_calls"][0]["function"]["name"]
         if name == "write_file":
             return None, None, ("run_command", {"command": "python hello_fly.py"})
         if name == "learn_skill" and "type" in user:
@@ -83,6 +91,8 @@ async def slots(sid: int, action: str, req: Request):
 async def chat(req: Request):
     body = await req.json()
     msgs = body["messages"]
+    if os.environ.get("MOCK_NO_TOOLS") and body.get("tools"):
+        return JSONResponse({"error": {"message": "this model does not support tools"}}, 400)
     thinking = (body.get("chat_template_kwargs") or {}).get("enable_thinking", False)
     reasoning, content, call = plan(msgs, thinking)
     prompt = flat(msgs)
@@ -112,7 +122,9 @@ async def chat(req: Request):
                 n += 1
                 yield chunk({"content": part + " "})
                 await asyncio.sleep(0.03)
-        if call:
+        if call and not body.get("tools"):     # no native tools: write the call as a ```tool block
+            yield chunk({"content": "\n```tool\n" + json.dumps({"name": call[0], "arguments": call[1]}) + "\n```"})
+        elif call:
             args = json.dumps(call[1])
             yield chunk({"tool_calls": [{"index": 0, "id": "call_" + uuid.uuid4().hex[:6], "type": "function",
                                          "function": {"name": call[0], "arguments": ""}}]})

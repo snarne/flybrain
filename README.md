@@ -164,7 +164,8 @@ hi"). It works like this (`server/skills.py`):
 
 1. **Plan.** The LLM describes the movement as keyframes of motor controls: per leg `swing`, `lift`,
    `reach`, `grip`, `spread`; wings `power`, `extend`, `stroke`; head `yaw`/`pitch`/`roll`;
-   proboscis; antennae. Values from -1 to 1 over time.
+   proboscis; antennae. Values from -1 to 1 over time. It can first call `motor_reference` for the
+   joint ranges and timing facts, and values outside what the skeleton allows are clipped.
 2. **Search the wiring (the slow part, done once).** Each control direction maps to muscle pools
    (e.g. "front-left lift up" = the front-left trochanter flexor motor neurons). For every neuron, the
    engine computes its influence on every pool through up to three synapses (signed, normalised by
@@ -231,19 +232,36 @@ machine shows more than one GPU (say a CPU's integrated graphics next to a graph
 uses the one with the most memory. You can switch models any time ("Change" in the Chat tab); the
 choice is remembered for that machine only.
 
-### Any model
+### Any model, offline or online
 
-The built-in list is just a starting point. Fly works with any chat model that can call tools. In the
-Chat tab, **Use another model** takes one of:
+The built-in list is just a starting point. Fly works with any chat model, running on your machine
+(fully offline once downloaded) or on a server or hosted API. In the Chat tab, **Use another model**
+takes one of:
 
-| Option | Example | Runs |
-|---|---|---|
-| Any GGUF model on Hugging Face | `unsloth/gemma-3-12b-it-GGUF:Q4_K_M`, `Qwen/Qwen2.5-7B-Instruct-GGUF` | here, with llama.cpp; downloaded once into `models/hf/` |
-| A GGUF file you already have | `/Users/you/models/my-model.gguf`, `D:\models\my-model.gguf` | here, with llama.cpp |
-| Any OpenAI-compatible server | Ollama `http://localhost:11434/v1`, LM Studio `http://localhost:1234/v1`, vLLM, or a hosted API URL, plus the model name and an API key if it needs one | wherever that server runs |
+| Option | Example | Runs | Offline? |
+|---|---|---|---|
+| Any GGUF model on Hugging Face | `unsloth/gemma-3-12b-it-GGUF:Q4_K_M`, `Qwen/Qwen2.5-7B-Instruct-GGUF` | here, with llama.cpp; downloaded once into `models/hf/` | yes, after the download |
+| A GGUF file you already have | `/Users/you/models/my-model.gguf`, `D:\models\my-model.gguf` | here, with llama.cpp | yes |
+| A local server | Ollama `http://localhost:11434/v1`, LM Studio `http://localhost:1234/v1`, vLLM, llama.cpp | on your machine or network | yes |
+| A hosted API that speaks the OpenAI chat format | the provider's base URL (usually ending in `/v1`), the model name, and your API key | the provider's servers | no |
 
-The choice is remembered for that machine only, in `data/settings/` (which never goes to git; an API
-key you enter is stored there too). Pick a built-in model again to switch back.
+The choice is remembered for that machine only, in `data/settings/` (which never goes to git). An API
+key typed there is stored there too; to keep it out of files altogether, leave the key field empty
+and set the environment variable `FLYBRAIN_API_KEY` before starting instead. Pick a built-in model
+again to switch back.
+
+**Models without tool calling** work too. If a server rejects tools, Fly switches that model to
+describing its tools in the prompt and reading its calls from fenced blocks, and says so in the chat.
+Native tool calling is more reliable, so prefer models that have it. Set `"tool_mode": "prompt"` to
+force the prompt style, `"native"` to never fall back.
+
+**Better models plan better movements.** When asked for a new movement, Fly reads `motor_reference`
+(every motor control, each leg joint's range in degrees, real fly timing, and the built-in walking
+and grooming timelines as worked examples), writes a keyframe timeline, and learns it. The result
+comes back as a planned-vs-achieved timeline for each control, and Fly can `refine_skill` to fix
+what lagged or overshot, keeping the neurons already found. A stronger model writes more realistic
+timelines and makes better use of that feedback, so its skills come out more accurate; the
+simulated nervous system and the practice loop are the same for every model.
 
 Or set it in a file. Create `llm_config.json` next to this README (it is git-ignored). Top-level keys
 apply on every machine; a section named after a profile applies only there:
@@ -262,13 +280,13 @@ apply on every machine; a section named after a profile applies only there:
 | `model` | a built-in choice: `qwen3.6-35b-a3b`, `qwen3.6-35b-a3b-q3`, `qwen3.6-27b`, `qwen3.5-9b`, `qwen3.5-4b` |
 | `hf_model` | any Hugging Face GGUF repo, optionally `:QUANT` |
 | `model_path` | a GGUF file on disk |
-| `external_url`, `external_model`, `external_api_key` | an OpenAI-compatible server instead of the built-in engine |
+| `external_url`, `external_model`, `external_api_key` | an OpenAI-compatible server instead of the built-in engine (or the key in `FLYBRAIN_API_KEY`) |
 | `external_strict` | `true` for hosted APIs that reject llama.cpp's extra sampling settings (automatic when an API key is set) |
+| `tool_mode` | `auto` (default), `native` or `prompt` |
 | `context` | context window in tokens |
 | `extra_args` | passed straight to llama-server |
 
-Notes: the model needs tool calling for Fly to code and use its body (most recent instruct models
-have it). KV-cache saving and restoring (below) needs llama.cpp's own server, so with an external
+Notes: KV-cache saving and restoring (below) needs llama.cpp's own server, so with an external
 server each conversation is re-read after a restart. "Thinking" is shown for models that stream it
 (`reasoning_content` or `reasoning`).
 
@@ -287,7 +305,8 @@ next step. If Laya can't load, simple keyword rules stand in and the chat labels
 The **LLM** (Qwen) then answers, streaming its thinking (collapsible) and its reply. It has tools:
 read/write/edit files and run commands in the `workspace/` folder (commands ask for your approval
 unless you tick Auto-approve), long-term notes (remember/recall), and its body
-(body_experiment, stimulate_senses, brain_status, list_skills, learn_skill, do_skills).
+(body_experiment, stimulate_senses, brain_status, list_skills, motor_reference, learn_skill,
+refine_skill, do_skills).
 
 ### KV caching
 

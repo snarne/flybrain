@@ -87,6 +87,13 @@ TOOLS = [
                        "\"LF.reach\": 0.5}, {\"t\": 0.35, \"LF.lift\": -0.6, \"LF.grip\": 0.8}, {\"t\": 0.5, \"LF.lift\": 0, \"LF.grip\": 0}]",
                        "items": {"type": "object"}}},
         ["name", "description", "keyframes"]),
+    _fn("motor_reference", "Everything you need to plan an accurate movement: every motor control and what it "
+        "moves, how far each leg joint can go (degrees), how fast real flies move, and the keyframe timelines of "
+        "the built-in skills (walking, turning, grooming) as worked examples. Read it before planning a new skill.", {}),
+    _fn("refine_skill", "Improve a learned skill with a corrected plan (e.g. after comparing the planned vs achieved "
+        "timeline learn_skill returned). Keeps the neurons already found and practises again; the better version is kept.",
+        {"name": {"type": "string"}, "keyframes": {"type": "array", "items": {"type": "object"}},
+         "duration": {"type": "number"}, "description": {"type": "string"}}, ["name", "keyframes"]),
     _fn("do_skills", "Perform learned skills on the fly body, in order (e.g. to type a word: alternate tap skills, one "
         "per letter). Instant: replays the saved neuron drive.",
         {"names": {"type": "array", "items": {"type": "string"}}, "repeat": {"type": "integer", "description": "1-20, default 1"}},
@@ -301,10 +308,13 @@ class ToolRunner:
         if not r.get("ok"):
             return f"Couldn't learn it: {r.get('error')}", False, {}
         drv = "; ".join(f"{d['channel']} via {d['level_text']}: {', '.join(d['types'][:3])}" for d in r["drivers"])
+        tl = "; ".join(f"{k}: " + ", ".join(f"t={t} plan {p:+.2f} got {g:+.2f}" for t, p, g in pts)
+                       for k, pts in (r.get("timeline") or {}).items())
         lim = (" Beyond what the skeleton allows, so clipped: " + "; ".join(r["limits"]) + ".") if r.get("limits") else ""
         return (f"Learned '{name}' in {r['seconds']} s.{lim} Practice scores {r['attempts']} (best {r['score']}; 1.0 = the "
                 f"muscles did exactly what you planned). Per control: {r['per_control']}. Neurons driven: {drv}. "
-                f"Saved: do_skills can now replay it instantly."), True, {}
+                f"Saved: do_skills can now replay it instantly. Planned vs achieved (control values, -1..1): {tl}. "
+                f"If something lags or overshoots, refine_skill with an adjusted timeline."), True, {}
 
     async def t_do_skills(self, names, repeat=1):
         eng = getattr(self.world, "skills", None)
@@ -314,4 +324,32 @@ class ToolRunner:
         if not r.get("ok"):
             return f"Couldn't: {r.get('error')}", False, {}
         return f"Done: {', '.join(f'{n} ({s})' for n, s in r['performed'])} (numbers: how closely the muscles followed the plan).", True, {}
+
+    async def t_motor_reference(self):
+        eng = getattr(self.world, "skills", None)
+        if eng is None:
+            return "The body isn't running.", False, {}
+        return eng.reference(), True, {}
+
+    async def t_refine_skill(self, name, keyframes, duration=None, description=None):
+        eng = getattr(self.world, "skills", None)
+        if eng is None:
+            return "The body isn't running.", False, {}
+        old = eng.lib.get(name)
+        if not old:
+            return (f"'{name}' isn't one of your learned skills (built-in ones can't be changed). Learn it first, "
+                    f"or learn a new variant under another name."), False, {}
+        r = await eng.learn(name, description or old.get("description", ""), {"duration": duration, "keyframes": keyframes},
+                            warm=old)
+        if not r.get("ok"):
+            return f"Couldn't refine it: {r.get('error')}", False, {}
+        if r["score"] < old.get("score", 0):
+            eng.lib[name] = old
+            eng._save()
+            return (f"The new version scored {r['score']} (old {old.get('score')}); kept the old one. "
+                    f"Planned vs achieved for the new plan: {r.get('timeline')}"), True, {}
+        tl = "; ".join(f"{k}: " + ", ".join(f"t={t} plan {p:+.2f} got {g:+.2f}" for t, p, g in pts)
+                       for k, pts in (r.get("timeline") or {}).items())
+        return (f"Refined '{name}': score {r['score']} (was {old.get('score')}), tries {r['attempts']}. "
+                f"Planned vs achieved: {tl}"), True, {}
 

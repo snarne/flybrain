@@ -66,7 +66,7 @@ def _get_json(url, timeout=20):
 
 
 KEYS = ("model", "context", "extra_args", "model_path", "hf_model", "external_url", "external_model", "external_api_key",
-        "external_slots", "external_strict", "port", "llama_tag")
+        "external_slots", "external_strict", "tool_mode", "port", "llama_tag")
 
 
 def load_config():

@@ -432,7 +432,78 @@ class SkillEngine:
         while self.state and self.state["kind"] == "reflex":
             await asyncio.sleep(0.05)
 
-    async def learn(self, name, description, plan, attempts=8):
+    CONTROL_TEXT = {
+        "swing": "+ leg forward (promotion) / - back (remotion)",
+        "lift": "+ femur raised (trochanter flexors) / - pressed down (extensors)",
+        "reach": "+ tibia extended / - folded against the femur",
+        "grip": "+ tarsus pressed down (depressor, long tendon) / - raised (levator)",
+        "spread": "- leg pulled in towards the body (adductor); 0 relaxed",
+        "twist": "+ femur rotated (reductor)",
+    }
+
+    def reference(self):
+        """A compact, factual guide for planning movements (for the motor_reference tool)."""
+        import math
+        m = self.m
+        lines = ["MOTOR CONTROLS (plan values -1..1; everyday activation up to 0.8 stays within the range a fly "
+                 "uses when walking, 0.8-1.0 reaches further, up to the joint limit):",
+                 "Legs: LF LM LH RF RM RH (Left/Right, Front/Middle/Hind). Per leg:"]
+        lines += [f"  <leg>.{c}: {txt}" for c, txt in self.CONTROL_TEXT.items()]
+        lines += ["Wings (each side, wingL/wingR): .power 0..1 flight muscles (the wings only beat once the feet are off "
+                  "the ball, e.g. after a jump); .extend 0..1 hold the wing out; .stroke + bigger / - smaller wingbeat.",
+                  "Head: head.yaw (+ left), head.pitch (+ up), head.roll. Proboscis: proboscis.rostrum, .haustellum, "
+                  ".labellum (0..1 extend), .pump. Antennae: antennaL, antennaR. Halteres: haltereL, haltereR. "
+                  "Abdomen: abdomen.curl (0..1), abdomen.bend (+ left / - right).",
+                  "",
+                  "JOINT RANGES (degrees; resting angle, walking range, reach at full drive, hard limit), per leg pair:"]
+        names = {"Coxa": "swing (thorax-coxa)", "Femur": "lift (coxa-trochanter)", "Tibia": "reach (femur-tibia)",
+                 "Tarsus1": "grip (tibia-tarsus)"}
+        for leg, label in (("LF", "front"), ("LM", "middle"), ("LH", "hind")):
+            rng = m.ranges.get(leg, {})
+            parts = []
+            for dof, what in names.items():
+                r = rng.get(dof)
+                if r:
+                    parts.append(f"{what}: rest {math.degrees(r['centre']):.0f}, walking ±{math.degrees(r['half']):.0f}, "
+                                 f"full ±{math.degrees(r['span']):.0f}, limit ±{math.degrees(r['limit']):.0f}")
+            lines.append(f"  {label} legs: " + "; ".join(parts))
+        lines += ["",
+                  "TIMING (real flies, and this body):",
+                  "  Walking: tripod gait, LF+RM+LH alternate with RF+LM+RH. 5-15 steps per second; each leg swings "
+                  "(lifted, moving forward) for ~35-40% of a step and pushes back on the ground for the rest.",
+                  "  Grooming sweeps: ~5-8 per second. Proboscis extension: ~0.1-0.3 s. Escape jump: a few ms (giant fibre only).",
+                  "  Nerve + muscle delay ~40 ms; muscles smooth anything faster than ~30 ms. Plan keyframes >= 0.05 s "
+                  "apart; the engine samples every 20 ms and compares what the muscles did with your plan.",
+                  "  Plans are linear between keyframes; a control not mentioned stays 0 (relaxed); a control keeps its "
+                  "last value after its last keyframe, so return it to 0 explicitly.",
+                  "",
+                  "WORKED EXAMPLES (built-in skills, learned on this connectome):"]
+        for name in ("walk_forward", "groom_antennae"):
+            sk = self.builtin.get(name)
+            if sk:
+                kf = sk["plan"]["keyframes"]
+                lines.append(f"  {name} ({sk['plan'].get('duration')} s, score {sk.get('score')}): "
+                             + json.dumps(kf[:5] if name == "walk_forward" else kf)
+                             + (" ... (the cycle continues)" if name == "walk_forward" and len(kf) > 5 else ""))
+        lines += ["", "Tips: one skill per reusable unit (one tap, one stride), 0.3-2 s long; after learning, compare the "
+                  "planned vs achieved timeline and use refine_skill to correct lags or overshoots."]
+        return "\n".join(lines)
+
+    def timeline(self, tracks, ach, plan, n=8):
+        """Planned vs achieved for each control at the plan's keyframe times (at most n), for the LLM to
+        compare and refine its plan."""
+        ts = sorted({float(k.get("t", 0)) for k in plan.get("keyframes", [])})
+        if len(ts) > n:
+            ts = [ts[int(i * (len(ts) - 1) / (n - 1))] for i in range(n)]
+        out = {}
+        for k, tr in tracks.items():
+            grid = np.arange(len(tr)) * BIN_S
+            a = ach.get(k, np.zeros(len(tr)))
+            out[k] = [(round(t, 2), round(float(np.interp(t, grid, tr)), 2), round(float(np.interp(t + 0.04, grid, a)), 2))
+                      for t in ts]
+        return out
+
+    async def learn(self, name, description, plan, attempts=8, warm=None):
         if self.busy:
             return {"ok": False, "error": "busy with another movement"}
         self.busy = True
@@ -445,6 +516,14 @@ class SkillEngine:
             if self.E is None:
                 await asyncio.get_running_loop().run_in_executor(None, self.build_influence)
             drivers = self.pick_drivers(tracks)
+            if warm:
+                # refining a known skill: keep the neurons already found for each movement (the expensive part)
+                old = {d["channel"]: d for d in warm.get("drivers", []) if not d.get("trim")}
+                for d in drivers:
+                    o = old.get(d["channel"])
+                    if o:
+                        d.update(level=o["level"], level_i=LEVELS.index(o["level"]), neurons=list(o["neurons"]),
+                                 tried=list(o["neurons"]))
             if not drivers:
                 return {"ok": False, "error": "the plan doesn't move anything"}
             best = None
@@ -460,8 +539,9 @@ class SkillEngine:
                 history.append(round(score, 3))
                 if best is None or score > best[0]:
                     best = (score, json.loads(json.dumps(drivers, default=float)), per)
+                    best_tl = self.timeline(tracks, ach, plan)
                 self.emit({"type": "skill", "event": "attempt", "name": name, "attempt": a, "score": round(score, 3),
-                           "per_control": {k: round(v, 2) for k, v in per.items()}})
+                           "per_control": {k: round(float(v), 2) for k, v in per.items()}})
                 if score >= 0.8 or a == attempts:
                     break
                 changes = self.adjust(drivers, tracks, ach, cross, per, a)
@@ -483,7 +563,8 @@ class SkillEngine:
             self.emit({"type": "skill", "event": "learned", "name": name, "score": skill["score"],
                        "attempts": history, "seconds": round(time.time() - t0, 1)})
             return {"ok": True, "name": name, "score": skill["score"], "attempts": history, "limits": notes,
-                    "per_control": {k: round(v, 2) for k, v in per.items()},
+                    "timeline": best_tl,
+                    "per_control": {k: round(float(v), 2) for k, v in per.items()},
                     "drivers": [self._describe(d) for d in drv],
                     "seconds": round(time.time() - t0, 1)}
         except ValueError as e:
