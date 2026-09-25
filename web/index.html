@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flybrain</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<header id="topbar">
+  <div class="brand">Flybrain <span>BANC brain + nerve cord · 166,029 neurons · 11.5M connections</span></div>
+  <div class="clock">
+    <span id="t-sim">0.0 s</span>
+    <span class="sep">·</span>
+    <span id="t-ratio" title="Simulated time per real second">1.00× real time</span>
+    <span class="sep">·</span>
+    <span id="t-firing">0 firing</span>
+  </div>
+  <div class="viewmode" role="group" aria-label="View">
+    <button data-view="split" class="on">Fly + brain</button>
+    <button data-view="fly">Fly</button>
+    <button data-view="brain">Brain</button>
+  </div>
+  <div id="conn" class="conn off">connecting…</div>
+</header>
+
+<div id="view-brain" class="view"></div>
+<div id="view-fly" class="view">
+  <div class="fly-hud">
+    <div id="fly-mode" class="mode-badge">Resting</div>
+    <div id="fly-senses" class="fly-senses"></div>
+  </div>
+  <div id="decision" class="decision" hidden></div>
+  <div class="experiments">
+    <div class="exp-group"><span>Show it</span>
+      <button data-exp="loom" data-side="left" title="A dark object swoops in from the left">Threat ◀</button>
+      <button data-exp="loom" data-side="right" title="A dark object swoops in from the right">Threat ▶</button>
+      <button data-exp="sugar" title="Touch a sugar drop to the proboscis">Sugar</button>
+      <button data-exp="bitter" title="Touch a bitter drop to the proboscis">Bitter</button>
+      <button data-exp="dust" title="Dust on the antennae">Dust</button>
+      <button id="demo" title="Run all of them in sequence">▶ Demo</button>
+    </div>
+    <div class="exp-group" title="Drives these descending neurons directly. The escape jump works; walking and grooming rhythms need nerve-cord dynamics this model doesn't have, so you'll see only twitches. Teach those movements as skills instead."><span>Activate neurons</span>
+      <button data-exp="p9">P9 · walk</button>
+      <button data-exp="mdn">MDN · back up</button>
+      <button data-exp="dna02_l">DNa02 L · turn</button>
+      <button data-exp="dna02_r">DNa02 R · turn</button>
+      <button data-exp="gf">Giant fibre · jump</button>
+      <button data-exp="adn">aDN · groom</button>
+    </div>
+  </div>
+</div>
+
+<div id="runaway" hidden>
+  The brain is stuck in self-sustaining firing with no input. This happens in paper-exact mode.
+  <button data-cmd="reset">Quiet the brain</button>
+</div>
+
+<aside id="left" class="panel">
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="chat" class="on">Chat</button>
+    <button role="tab" data-tab="senses">Senses</button>
+  </nav>
+
+  <div id="tab-chat" class="tab">
+    <div id="model-card"></div>
+    <div id="chat-head">
+      <span id="chat-title">New conversation</span>
+      <select id="history" title="Past conversations"><option value="">History</option></select>
+      <button id="new-chat" class="btn" title="Start a new conversation">New</button>
+    </div>
+    <div id="chat-log" aria-live="polite"></div>
+    <form id="composer">
+      <textarea id="prompt" rows="2" placeholder="Talk to Fly, ask it to design or code something, or to use its body…"></textarea>
+      <div class="composer-row">
+        <label title="Run commands without asking each time"><input type="checkbox" id="auto-approve"> Auto-approve commands</label>
+        <label title="Let the conversation drive neurons in the fly"><input type="checkbox" id="bridge-on" checked> Body link</label>
+        <button type="submit" id="send" class="btn primary">Send</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="tab-senses" class="tab" hidden>
+    <section>
+      <h2>Senses <small>turn inputs on and watch the signal spread</small></h2>
+      <div id="stimuli"></div>
+      <div class="row slider-row">
+        <label for="rate">Intensity</label>
+        <input id="rate" type="range" min="10" max="200" step="5" value="100">
+        <output id="rate-out">100%</output>
+      </div>
+      <p class="hint" id="rate-hint">How hard the sensory neurons fire, relative to a calibrated default for each sense. Hover a sense to see which neurons it drives.</p>
+    </section>
+
+    <section>
+      <h2>Stimulate by cell type</h2>
+      <div class="search">
+        <input id="search" placeholder="e.g. LPLC2, MBON, DNa02, Kenyon" autocomplete="off">
+        <div id="search-results"></div>
+      </div>
+    </section>
+
+    <section class="controls">
+      <button data-cmd="clear" class="ghost">All inputs off</button>
+      <button data-cmd="reset" class="ghost">Quiet the brain</button>
+      <button id="pause" class="ghost">Pause</button>
+      <div class="row">
+        <label for="speed">Speed</label>
+        <select id="speed">
+          <option value="0.1">0.1× slow motion</option>
+          <option value="0.25">0.25×</option>
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1× real time</option>
+          <option value="2">2×</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="mode">Model</label>
+        <select id="mode">
+          <option value="stable" selected>Stabilised (recommended)</option>
+          <option value="paper">No adaptation (plain Shiu et al. model)</option>
+        </select>
+      </div>
+      <p class="hint" id="mode-hint"></p>
+    </section>
+  </div>
+</aside>
+
+<aside id="right" class="panel">
+  <section>
+    <h2>Skills <small>movements the fly has learned · the first time is slow, then it's instant</small></h2>
+    <div id="skill-live" class="skill-live" hidden></div>
+    <div id="skill-list"></div>
+  </section>
+  <section>
+    <h2>Body link <small>what the agent is doing to its fly brain</small></h2>
+    <div id="bridge-feed"><div class="empty">Quiet. Say something in Chat.</div></div>
+  </section>
+  <section>
+    <h2>Neurons → muscles <small>how hard each body part's motor neurons are driving its muscles · click to find them</small></h2>
+    <div id="pathways"></div>
+    <div class="legend"><span class="via brain">motor</span> motor neurons → muscles &nbsp; <span class="via cord">command</span> descending neurons, brain → nerve cord</div>
+  </section>
+  <section>
+    <h2>Brain regions <small>activity now · click to show or hide</small></h2>
+    <div id="regions"></div>
+    <div class="row slider-row">
+      <label for="brightness">Brightness</label>
+      <input id="brightness" type="range" min="5" max="80" step="1" value="32">
+    </div>
+    <div class="row toggles">
+      <label><input type="checkbox" id="show-shells" checked> Region surfaces</label>
+      <label><input type="checkbox" id="show-outline" checked> Brain outline</label>
+    </div>
+  </section>
+  <section>
+    <h2>Firing now</h2>
+    <div id="top"></div>
+  </section>
+</aside>
+
+<div id="inspector" class="panel" hidden></div>
+
+<div id="tip">Drag to rotate · scroll to zoom · click any neuron in the brain</div>
+<div id="hover" hidden></div>
+
+<script type="module" src="app.js"></script>
+<script type="module" src="chat.js"></script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+# Everything below is created on your machine when you run the app. None of it belongs in git:
+# it is large, machine-specific, or personal (your conversations, memory notes, logs, settings).
+
+# installed tools, Python environments and caches (one set per machine profile)
+/.tools/
+/.cache/
+/.venv/
+/.venv-*/
+__pycache__/
+
+# LLM engine builds and downloaded models
+/runtime/
+/models/
+
+# your conversations, KV caches, memory notes, logs, per-machine settings
+/data/
+# the agent's coding workspace
+/workspace/
+# your own overrides
+/llm_config.json
+
+# connectome built on first run from the public download
+/server/data/connectome_*.npz
+/server/data/*.parquet
+/server/data/*.part
+
+# OS / editor clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.swp
+.idea/
+.vscode/
+
+# secrets, just in case
+.env
+.env.*
+*.pem
+*.key

@@ -1,0 +1,19 @@
+[project]
+name = "flybrain"
+version = "0.2.0"
+description = "Whole fruit-fly nervous system (BANC brain + nerve cord connectome) simulated live in 3D, with a body and an AI agent"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "numpy>=1.26",
+    "numba>=0.59",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pandas>=2.0",
+    "pyarrow>=14",
+    "scipy>=1.11",
+    "httpx>=0.27",
+    "laya>=0.3.20",
+]
+
+[tool.uv]
+package = false
