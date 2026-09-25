@@ -76,7 +76,9 @@ TOOLS = [
         "tibia / - fold it), <leg>.grip (+ press the tarsus down / - raise it), <leg>.spread (+ out / - in); "
         "wingL/wingR .power (flight muscles, 0..1), .extend (hold the wing out, 0..1), .stroke (+ bigger / - smaller "
         "wingbeat); head.yaw (+ left), head.pitch (+ up), head.roll; proboscis.rostrum / .haustellum / .labellum "
-        "(extend, 0..1), proboscis.pump; antennaL, antennaR. Keep movements short (0.3-2 s) and make one skill per "
+        "(extend, 0..1), proboscis.pump; antennaL, antennaR; haltereL, haltereR; abdomen.curl (0..1), abdomen.bend "
+        "(+ left / - right). The joints have real limits (a fly's leg can't bend backwards or spin), so extreme or "
+        "impossible targets get clipped and you'll be told which. Keep movements short (0.3-2 s) and make one skill per "
         "reusable unit (e.g. one tap), then chain them with do_skills.",
         {"name": {"type": "string", "description": "short snake_case name, e.g. tap_front_left"},
          "description": {"type": "string", "description": "what the movement is, in a few words"},
@@ -299,7 +301,8 @@ class ToolRunner:
         if not r.get("ok"):
             return f"Couldn't learn it: {r.get('error')}", False, {}
         drv = "; ".join(f"{d['channel']} via {d['level_text']}: {', '.join(d['types'][:3])}" for d in r["drivers"])
-        return (f"Learned '{name}' in {r['seconds']} s. Practice scores {r['attempts']} (best {r['score']}; 1.0 = the "
+        lim = (" Beyond what the skeleton allows, so clipped: " + "; ".join(r["limits"]) + ".") if r.get("limits") else ""
+        return (f"Learned '{name}' in {r['seconds']} s.{lim} Practice scores {r['attempts']} (best {r['score']}; 1.0 = the "
                 f"muscles did exactly what you planned). Per control: {r['per_control']}. Neurons driven: {drv}. "
                 f"Saved: do_skills can now replay it instantly."), True, {}
 

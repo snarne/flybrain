@@ -107,6 +107,15 @@ Every frame, in simulated time:
    twitch-like time constant), and each joint moves by agonist minus antagonist around a resting
    pose: trochanter flexors lift the femur and extensors press it down, the tibia flexors fold the
    leg and the extensor reaches, the tarsus depressor grips, the thorax-coxa muscles swing the leg.
+   All 805 motor neurons are mapped to a body part: six legs, two wings, two halteres, neck,
+   proboscis and pharynx, antennae, abdomen, and internal organs (crop, spiracles, salivary gland,
+   uterus, eye), each a row in the Neurons → muscles panel.
+   **Joint limits:** each leg joint stays within the range seen in recorded fly walking widened by an
+   anatomical margin (a little more for the front legs, which groom), so no amount of drive bends a
+   leg backwards. Skills are held to the same limits: a plan asking for more is clipped, and Fly is
+   told which joint stopped it.
+   The ball turns under the feet that are down: legs sweeping backwards roll it for forward walking,
+   forwards for backward walking, and uneven left/right strokes spin it for turns.
    Wings: the indirect flight muscles' motor neurons (DLM, DVM) set flight power, the steering
    muscles set stroke amplitude and posture. Neck muscles turn the head; MN9 and the proboscis
    muscles extend the proboscis; the pharyngeal muscles pump. Nothing is animated by hand except the

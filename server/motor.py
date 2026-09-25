@@ -26,7 +26,12 @@ Mapping notes (approximate where the literature is thin, and said so in the UI):
 - Proboscis (Schwarz et al. 2017; McKellar et al. 2020): m9 (MN9) rostrum protraction; m8/m4
   haustellum extension; m6/m7 labellum spreading; m1/m2 retraction; pharynx m10-12 pumping.
 """
+import json
+from pathlib import Path
+
 import numpy as np
+
+BODY_FILE = Path(__file__).resolve().parents[1] / "web" / "data" / "fly_body.json"
 
 SAT_HZ = 80.0     # pool mean rate at which a muscle counts as fully active
 # ...except muscles that need only a few spikes: the jump muscle twitches fully on one or two TTMn
@@ -79,6 +84,38 @@ LEG_JOINTS = {
 }
 MIRRORED = {"Coxa_yaw", "Femur_roll"}
 
+# Joint limits. The skeleton only bends so far: each leg joint is kept within the range seen in
+# recorded fly walking (NeuroMechFly's kinematic data) widened by an anatomical margin, a bit more
+# for the front legs, which also groom and reach. Radians, added below and above that walking range.
+LIMIT_MARGIN = {
+    "Coxa": (0.6, 0.6), "Femur": (0.7, 0.9), "Tibia": (0.9, 0.5), "Tarsus1": (0.5, 0.6),
+    "Coxa_yaw": (0.35, 0.35), "Femur_roll": (0.4, 0.4), "Coxa_roll": (0.3, 0.3),
+}
+FRONT_EXTRA = {"Coxa": 0.4, "Femur": 0.4}
+
+
+def _leg_limits():
+    """Per leg and DOF: (min offset, max offset) around the resting pose the viewer uses."""
+    try:
+        steps = json.loads(BODY_FILE.read_text())["steps"]["legs"]
+    except Exception:
+        return {}
+    out = {}
+    for leg, dofs in steps.items():
+        out[leg] = {}
+        for dof, series in dofs.items():
+            a = np.asarray(series, float)
+            n = len(a)
+            x = 0.5 * (n - 1)                       # the viewer's resting pose: mid-stride
+            i = int(x)
+            rest = a[i] * (1 - (x - i)) + a[min(i + 1, n - 1)] * (x - i)
+            lo_m, hi_m = LIMIT_MARGIN.get(dof, (0.3, 0.3))
+            if leg[1] == "F":
+                lo_m += FRONT_EXTRA.get(dof, 0)
+                hi_m += FRONT_EXTRA.get(dof, 0)
+            out[leg][dof] = (float(a.min() - lo_m - rest), float(a.max() + hi_m - rest))
+    return out
+
 
 class Motor:
     def __init__(self, world):
@@ -110,7 +147,7 @@ class Motor:
                 if side and p["side"] != side:
                     continue
                 m = p["muscle"]
-                if (muscles and m in muscles) or (contains and any(c in m for c in contains)):
+                if (not muscles and not contains) or (muscles and m in muscles) or (contains and any(c in m for c in contains)):
                     out.append(i)
             return out
 
@@ -127,6 +164,10 @@ class Motor:
                     self.controls[f"wing{s}.{c}"] = (find(part="wing", muscles=pos, side=side), find(part="wing", muscles=neg, side=side))
             self.controls[f"antenna{s}"] = (find(part="antenna", side=side) + find(part="antenna, scape", side=side), [])
             self.controls[f"haltere{s}"] = (find(part="haltere", side=side), [])
+        # abdomen: segmental motor neurons of both sides curl it; one side more than the other bends it sideways
+        abd_l, abd_r = find(part="abdomen", side="left"), find(part="abdomen", side="right")
+        self.controls["abdomen.curl"] = (abd_l + abd_r, [])
+        self.controls["abdomen.bend"] = (abd_l, abd_r)
         for c in ("yaw", "roll"):
             words = HEAD_CONTROLS[c]
             self.controls[f"head.{c}"] = (find(part="neck", side="left", contains=words),
@@ -137,6 +178,21 @@ class Motor:
             part = "pharynx" if c == "pump" else "proboscis"
             self.controls[f"proboscis.{c}"] = (find(part=part, muscles=muscles), [])
         self.controls = {k: v for k, v in self.controls.items() if v[0] or v[1]}
+        self.limits = _leg_limits()
+        self.clipped = {}                    # control -> True while a joint sits at its limit
+        # how far each control can go before a joint hits its limit (1 = the full range is reachable)
+        self.reach = {}
+        for leg in LEGS:
+            for dof, terms in LEG_JOINTS.items():
+                lo, hi = self.limits.get(leg, {}).get(dof, (-9, 9))
+                for c, g in terms:
+                    gg = -g if (dof in MIRRORED and leg[0] == "R") else g
+                    for d in (+1, -1):
+                        off = gg * d                          # joint offset at full activation this way
+                        room = hi if off > 0 else -lo
+                        frac = min(1.0, max(0.0, room / abs(off))) if off else 1.0
+                        k = (f"{leg}.{c}", d)
+                        self.reach[k] = min(self.reach.get(k, 1.0), frac)
         self.value = {k: 0.0 for k in self.controls}
 
     # ------------------------------------------------------------------ per frame
@@ -181,6 +237,11 @@ class Motor:
             if j is not None:
                 d["Femur"] += 1.3 * float(self.act[j])
                 d["Tibia"] -= 0.8 * float(self.act[j])
+            # the skeleton only goes so far
+            lim = self.limits.get(leg, {})
+            for dof in d:
+                if dof in lim:
+                    d[dof] = min(max(d[dof], lim[dof][0]), lim[dof][1])
             legs[leg] = {k: round(x, 4) for k, x in d.items()}
         wings = {s: {"power": round(max(v.get("wingL.power", 0), v.get("wingR.power", 0)), 3),
                      "extend": round(max(0.0, v.get(f"wing{s}.extend", 0)), 3),
@@ -192,6 +253,7 @@ class Motor:
             "proboscis": {c: round(max(0.0, v.get(f"proboscis.{c}", 0)), 3) for c in PROBOSCIS},
             "antenna": {s: round(v.get(f"antenna{s}", 0), 3) for s in "LR"},
             "haltere": {s: round(v.get(f"haltere{s}", 0), 3) for s in "LR"},
+            "abdomen": {"curl": round(v.get("abdomen.curl", 0), 3), "bend": round(v.get("abdomen.bend", 0), 3)},
         }
 
     def summary(self):
@@ -203,6 +265,10 @@ class Motor:
         for s in "LR":
             out["wing" + s] = max(abs(v.get(f"wing{s}.{c}", 0)) for c in ("power", "extend", "stroke"))
             out["antenna" + s] = abs(v.get(f"antenna{s}", 0))
+            out["haltere" + s] = abs(v.get(f"haltere{s}", 0))
+        out["abdomen"] = max(abs(v.get("abdomen.curl", 0)), abs(v.get("abdomen.bend", 0)))
+        internal = [i for i, p in enumerate(self.pools) if p["part"] in ("crop", "spiracle", "salivary_gland", "uterus", "eye", "unknown")]
+        out["internal"] = float(self.act[internal].max()) if internal else 0.0
         out["head"] = max(abs(v.get(f"head.{c}", 0)) for c in ("yaw", "pitch", "roll"))
         out["proboscis"] = max(v.get(f"proboscis.{c}", 0) for c in PROBOSCIS)
         return {k: round(float(x), 3) for k, x in out.items()}

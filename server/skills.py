@@ -152,6 +152,15 @@ class SkillEngine:
                 pts.insert(0, (0.0, 0.0))
             tt, vv = zip(*pts)
             tracks[k] = np.interp(ts, tt, vv)
+        # the skeleton only bends so far: clip each control to what its joints can reach
+        self.limit_notes = []
+        for k, tr in tracks.items():
+            up, down = self.m.reach.get((k, 1), 1.0), self.m.reach.get((k, -1), 1.0)
+            clipped = np.clip(tr, -down, up)
+            if np.abs(clipped - tr).max() > 0.05:
+                self.limit_notes.append(f"{k} can only go to {-down:+.2f}..{up:+.2f} (joint limit); the plan asked for "
+                                        f"{tr.min():+.2f}..{tr.max():+.2f}")
+            tracks[k] = clipped
         return duration, tracks
 
     # ------------------------------------------------------------------ the wiring search
@@ -408,6 +417,7 @@ class SkillEngine:
         await self._wait_reflex()
         try:
             duration, tracks = self.parse_plan(plan)
+            notes = list(self.limit_notes)
             t0 = time.time()
             self.emit({"type": "skill", "event": "search", "name": name})
             if self.E is None:
@@ -441,7 +451,7 @@ class SkillEngine:
             rid = self.w.root_ids
             skill = {
                 "description": description, "plan": plan, "duration": duration, "score": round(score, 3),
-                "attempts": history, "learned": _now(), "dataset": self.w.tables.get("dataset", ""), "uses": 0,
+                "attempts": history, "limits": notes, "learned": _now(), "dataset": self.w.tables.get("dataset", ""), "uses": 0,
                 "drivers": [{"channel": d["channel"], "control": d["control"], "dir": d["dir"], "level": d["level"],
                              "neurons": d["neurons"], "root_ids": [str(rid[n]) for n in d["neurons"]],
                              "rates": [int(x) for x in d["rates"]]} for d in drv],
@@ -450,7 +460,7 @@ class SkillEngine:
             self._save()
             self.emit({"type": "skill", "event": "learned", "name": name, "score": skill["score"],
                        "attempts": history, "seconds": round(time.time() - t0, 1)})
-            return {"ok": True, "name": name, "score": skill["score"], "attempts": history,
+            return {"ok": True, "name": name, "score": skill["score"], "attempts": history, "limits": notes,
                     "per_control": {k: round(v, 2) for k, v in per.items()},
                     "drivers": [self._describe(d) for d in drv],
                     "seconds": round(time.time() - t0, 1)}

@@ -186,6 +186,8 @@ export async function createFlyView(dom) {
     ...Object.fromEntries(LEGS.map(l => [l, matsWhere(new RegExp(`^${l}(Coxa|Femur|Tibia|Tarsus)`))])),
     wingL: [mats.LWing, mats.Thorax].filter(Boolean), wingR: [mats.RWing, mats.Thorax].filter(Boolean),
     head: [mats.Head].filter(Boolean),
+    haltereL: [mats.LHaltere].filter(Boolean), haltereR: [mats.RHaltere].filter(Boolean),
+    abdomen: ['A1A2', 'A3', 'A4', 'A5', 'A6'].map(n => mats[n]).filter(Boolean),
     proboscis: [mats.Rostrum, mats.Haustellum].filter(Boolean),
     antennaL: matsWhere(/^L(Antenna|Pedicel|Funiculus|Arista)/), antennaR: matsWhere(/^R(Antenna|Pedicel|Funiculus|Arista)/),
   };
@@ -243,8 +245,19 @@ export async function createFlyView(dom) {
         gh.node.children[0].material.opacity = beating ? 0.1 - gh.k * 0.025 : 0;
       }
     }
-    // halteres beat in antiphase with the wings
-    for (const side of ['L', 'R']) extra(side + 'Haltere', Y, beating ? 0.6 * Math.cos(wingPhase + Math.PI) : 0);
+    // halteres: tilted by their own motor neurons, and beating in antiphase with the wings in flight
+    const Hl = J?.haltere || {};
+    for (const side of ['L', 'R']) extra(side + 'Haltere', Y, sm('hal' + side, 0.5 * (Hl[side] || 0), k) + (beating ? 0.6 * Math.cos(wingPhase + Math.PI) : 0));
+    // abdomen: segmental motor neurons curl it down, one side more than the other bends it sideways
+    const Ab = J?.abdomen || {};
+    const curl = sm('curl', Ab.curl || 0, k), bend = sm('bend', Ab.bend || 0, k);
+    ['A1A2', 'A3', 'A4', 'A5', 'A6'].forEach((seg, i) => {
+      const n = nodes[seg];
+      if (!n) return;
+      const q = new THREE.Quaternion().setFromAxisAngle(Y, -0.1 * curl * (i ? 1 : 0.4));
+      q.multiply(new THREE.Quaternion().setFromAxisAngle(Z, 0.08 * bend * (i ? 1 : 0.4)));
+      n.userData.extra = q;
+    });
     // head: neck motor neurons
     const H = J?.head || {};
     setJoint('Head', '_yaw', sm('hy', 0.45 * (H.yaw || 0), k));
@@ -277,7 +290,8 @@ export async function createFlyView(dom) {
 
     // ball turns under walking legs
     const ball_ = st.ball || [0, 0];
-    ball.rotation.y += (ball_[0] / ballR) * dt * -1;
+    ball.rotation.y += (ball_[0] / ballR) * dt * -1;       // walking forwards rolls the ball backwards
+    ballPivot.rotation.z += ball_[1] * dt * 0.6;             // turning spins it underneath
 
     // stimuli
     if (st.loom) {

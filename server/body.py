@@ -200,15 +200,22 @@ class Body:
         else:
             self._pending, self._pending_t = None, 0.0
         self.mode_t += dt
-        # the ball turns under legs that push back while gripping
-        push = 0.0
+        # the ball turns under the legs that are on it: a leg in stance (not lifted) sweeping backwards
+        # pushes the fly forwards, sweeping forwards pushes it backwards; left vs right turns it
+        fwd_l = fwd_r = 0.0
         for leg in legs:
             s_now = v.get(f"{leg}.swing", 0)
             ds = s_now - self._swing.get(leg, s_now)
             self._swing[leg] = s_now
-            if v.get(f"{leg}.grip", 0) > -0.2 and ds < 0:
-                push += -ds
-        self.ball = [0.9 * self.ball[0] + 0.1 * (push / max(dt, 1e-3)) * 0.6, 0.0]
+            if v.get(f"{leg}.lift", 0) < 0.15:               # foot down
+                push = -ds / max(dt, 1e-3)                    # + = foot moving back = fly moving forward
+                if leg[0] == "L":
+                    fwd_l += push
+                else:
+                    fwd_r += push
+        k = 0.12
+        self.ball = [(1 - k) * self.ball[0] + k * 0.6 * (fwd_l + fwd_r) / 2,
+                     (1 - k) * self.ball[1] + k * 0.35 * (fwd_l - fwd_r)]   # + = left legs push harder = turning right
         self.joints = motor.joints()
         self.parts = motor.summary()
 
@@ -232,6 +239,7 @@ class Body:
         }
 
 
+INTERNAL = ("crop", "spiracle", "salivary_gland", "uterus", "eye", "unknown")
 PART_ROWS = [
     # key, label, which pools (by key prefix / part)
     ("LF", "Front-left leg", lambda p: p["key"].startswith("LF.")),
@@ -246,6 +254,10 @@ PART_ROWS = [
     ("proboscis", "Proboscis and pharynx", lambda p: p["part"] in ("proboscis", "pharynx")),
     ("antennaL", "Left antenna", lambda p: p["part"].startswith("antenna") and p["side"] == "left"),
     ("antennaR", "Right antenna", lambda p: p["part"].startswith("antenna") and p["side"] == "right"),
+    ("haltereL", "Left haltere", lambda p: p["part"] == "haltere" and p["side"] == "left"),
+    ("haltereR", "Right haltere", lambda p: p["part"] == "haltere" and p["side"] == "right"),
+    ("abdomen", "Abdomen", lambda p: p["part"] == "abdomen"),
+    ("internal", "Internal: crop, spiracles, salivary gland, uterus, eye", lambda p: p["part"] in INTERNAL),
 ]
 DN_ROWS = [
     ("escape", "Giant fibre DNp01", "jump motor neuron + wing power (via PSI)"),
