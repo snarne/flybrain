@@ -110,12 +110,15 @@ Every frame, in simulated time:
    All 805 motor neurons are mapped to a body part: six legs, two wings, two halteres, neck,
    proboscis and pharynx, antennae, abdomen, and internal organs (crop, spiracles, salivary gland,
    uterus, eye), each a row in the Neurons → muscles panel.
-   **Joint limits:** each leg joint stays within the range seen in recorded fly walking widened by an
-   anatomical margin (a little more for the front legs, which groom), so no amount of drive bends a
-   leg backwards. Skills are held to the same limits: a plan asking for more is clipped, and Fly is
-   told which joint stopped it.
-   The ball turns under the feet that are down: legs sweeping backwards roll it for forward walking,
-   forwards for backward walking, and uneven left/right strokes spin it for turns.
+   **How far joints move:** every leg joint rests in the middle of the range a real fly uses when
+   walking (recorded kinematics). Everyday muscle activation moves it within that range; only
+   near-full activation goes further, to 1.2× the walking range (1.7× for the front legs, which also
+   groom and reach), and hard limits stop it there, so no amount of drive flails a leg or bends it
+   backwards. Skills are held to the same limits: a plan asking for more is clipped, and Fly is told
+   which joint stopped it.
+   The ball turns under the feet that are down, in the fly's own frame (its head points forward):
+   legs sweeping backwards roll it for forward walking, forwards for backward walking, and uneven
+   left/right strokes spin it for turns.
    Wings: the indirect flight muscles' motor neurons (DLM, DVM) set flight power, the steering
    muscles set stroke amplitude and posture. Neck muscles turn the head; MN9 and the proboscis
    muscles extend the proboscis; the pharyngeal muscles pump. Nothing is animated by hand except the
@@ -172,7 +175,9 @@ hi"). It works like this (`server/skills.py`):
    measures what the muscles actually did. It corrects the drive over the whole movement from the
    error (iterative learning control): harder where a muscle lagged, gentler where it overshot. A
    driver that can't move its muscle even at full drive is replaced one level down; one that makes
-   other body parts move is swapped for a more specific one. Up to eight tries, each starting from a
+   other body parts move is swapped for a more specific one. If a movement is still only roughly
+   right after three tries, that muscle's own motor neurons are added as a fine trim for the
+   remaining error, while the upstream drivers keep doing the bulk of it. Up to eight tries, each starting from a
    quiet nervous system; you see the tries, the drivers and the scores in the Skills panel, and the
    driven neurons light up.
 4. **Save.** The best version is stored in `data/skills/skills.json` (this computer only, not in

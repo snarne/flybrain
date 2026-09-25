@@ -73,7 +73,7 @@ TOOLS = [
         "seconds); afterwards the skill is saved and replayed instantly. Controls (values -1..1, linear between "
         "keyframes, unlisted controls stay relaxed at 0): per leg LF LM LH RF RM RH (front/middle/hind, left/right): "
         "<leg>.swing (+ forward / - back), <leg>.lift (+ raise the femur / - press down), <leg>.reach (+ extend the "
-        "tibia / - fold it), <leg>.grip (+ press the tarsus down / - raise it), <leg>.spread (+ out / - in); "
+        "tibia / - fold it), <leg>.grip (+ press the tarsus down / - raise it), <leg>.spread (- pull the leg in towards the body, 0 relaxed); "
         "wingL/wingR .power (flight muscles, 0..1), .extend (hold the wing out, 0..1), .stroke (+ bigger / - smaller "
         "wingbeat); head.yaw (+ left), head.pitch (+ up), head.roll; proboscis.rostrum / .haustellum / .labellum "
         "(extend, 0..1), proboscis.pump; antennaL, antennaR; haltereL, haltereR; abdomen.curl (0..1), abdomen.bend "

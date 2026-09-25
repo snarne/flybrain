@@ -48,7 +48,9 @@ LEG_CONTROLS = {
     "lift": (["trochanter_flexor", "accessory_trochanter_flexor"], ["trochanter_extensor", "sternotrochanter_extensor", "tergotrochanter_extensor"]),
     "reach": (["tibia_extensor"], ["tibia_flexor", "accessory_tibia_flexor"]),
     "grip": (["tarsus_depressor", "long_tendon"], ["tarsus_levator"]),
-    "spread": (["pleural_remotor_and_abductor"], ["sternal_adductor"]),
+    # the pleural remotor/abductor both swings the leg back and spreads it; it's counted once, as swing,
+    # so "spread" is only the adductor pulling the leg in (and the leg relaxing back out)
+    "spread": ([], ["sternal_adductor"]),
     "twist": (["femur_reductor"], []),
 }
 WING_CONTROLS = {
@@ -72,30 +74,43 @@ PROBOSCIS = {
     "pump": ["pharynx_m10", "pharynx_m11d", "pharynx_m11v", "pharynx_m12d"],
 }
 
-# joint gains (radians at full activation) for NeuroMechFly DOFs, relative to the resting pose
+# How controls move the leg joints. Each control drives one NeuroMechFly degree of freedom; full
+# activation takes the joint to the edge of the range a real fly uses when walking (recorded
+# kinematics), times SPAN_SCALE. Resting pose = the middle of that range. So a fully driven muscle
+# gives a natural, fly-sized movement, never a flail.
 LEG_JOINTS = {
-    # dof: [(control, gain)]
-    "Coxa": [("swing", -0.55)],
-    "Femur": [("lift", -0.95)],
-    "Tibia": [("reach", -1.1)],
-    "Tarsus1": [("grip", -0.55)],
-    "Coxa_yaw": [("spread", 0.35)],       # mirrored for right legs
-    "Femur_roll": [("twist", 0.35)],      # mirrored for right legs
+    # dof: [(control, direction)]  direction: which way (+1 / -1) the angle moves for a positive control
+    "Coxa": [("swing", -1)],         # + swing = leg forward (promotion)
+    "Femur": [("lift", -1)],         # + lift = femur raised (trochanter flexion)
+    "Tibia": [("reach", -1)],        # + reach = tibia extended
+    "Tarsus1": [("grip", -1)],       # + grip = tarsus pressed down
+    "Coxa_yaw": [("spread", 1)],     # + spread = leg out to the side (mirrored for right legs)
+    "Femur_roll": [("twist", 1)],    # mirrored for right legs
 }
 MIRRORED = {"Coxa_yaw", "Femur_roll"}
-
-# Joint limits. The skeleton only bends so far: each leg joint is kept within the range seen in
-# recorded fly walking (NeuroMechFly's kinematic data) widened by an anatomical margin, a bit more
-# for the front legs, which also groom and reach. Radians, added below and above that walking range.
-LIMIT_MARGIN = {
-    "Coxa": (0.6, 0.6), "Femur": (0.7, 0.9), "Tibia": (0.9, 0.5), "Tarsus1": (0.5, 0.6),
-    "Coxa_yaw": (0.35, 0.35), "Femur_roll": (0.4, 0.4), "Coxa_roll": (0.3, 0.3),
-}
-FRONT_EXTRA = {"Coxa": 0.4, "Femur": 0.4}
+SPAN_SCALE = 1.2                     # a little beyond walking...
+SPAN_SCALE_FRONT = 1.7               # ...and more for the front legs, which also groom and reach
+# Hard joint limits: the walking range widened by this fraction of itself (+ a fixed margin, rad).
+# No drive can bend a joint past them.
+LIMIT_FRAC, LIMIT_ABS = 0.35, 0.1
+LIMIT_FRONT_EXTRA = 0.35
 
 
-def _leg_limits():
-    """Per leg and DOF: (min offset, max offset) around the resting pose the viewer uses."""
+NATURAL = 0.8   # activations up to this move a joint within its walking range; beyond, towards the full span
+
+
+def _shape(value, r):
+    """Control value -> joint offset. Everyday activation (|value| <= NATURAL) stays inside the range a
+    fly uses when walking; only near-full activation reaches past it, up to the span (grooming, reaching)."""
+    a = abs(value)
+    half = r.get("half", r["span"])
+    off = half * min(a, NATURAL) / NATURAL + max(0.0, a - NATURAL) / (1 - NATURAL) * max(0.0, r["span"] - half)
+    return off if value >= 0 else -off
+
+
+def _leg_ranges():
+    """Per leg and DOF from recorded walking: centre (resting angle), the offset reached at full
+    drive, and the hard limit, both relative to the centre."""
     try:
         steps = json.loads(BODY_FILE.read_text())["steps"]["legs"]
     except Exception:
@@ -103,17 +118,14 @@ def _leg_limits():
     out = {}
     for leg, dofs in steps.items():
         out[leg] = {}
+        front = leg[1] == "F"
         for dof, series in dofs.items():
             a = np.asarray(series, float)
-            n = len(a)
-            x = 0.5 * (n - 1)                       # the viewer's resting pose: mid-stride
-            i = int(x)
-            rest = a[i] * (1 - (x - i)) + a[min(i + 1, n - 1)] * (x - i)
-            lo_m, hi_m = LIMIT_MARGIN.get(dof, (0.3, 0.3))
-            if leg[1] == "F":
-                lo_m += FRONT_EXTRA.get(dof, 0)
-                hi_m += FRONT_EXTRA.get(dof, 0)
-            out[leg][dof] = (float(a.min() - lo_m - rest), float(a.max() + hi_m - rest))
+            lo, hi = float(a.min()), float(a.max())
+            half = max((hi - lo) / 2, 0.05)
+            sc = SPAN_SCALE_FRONT if front else SPAN_SCALE
+            lim = half * (1 + LIMIT_FRAC) + LIMIT_ABS + (LIMIT_FRONT_EXTRA if front else 0)
+            out[leg][dof] = {"centre": (lo + hi) / 2, "half": half, "span": half * sc, "limit": max(lim, half * sc)}
     return out
 
 
@@ -178,21 +190,10 @@ class Motor:
             part = "pharynx" if c == "pump" else "proboscis"
             self.controls[f"proboscis.{c}"] = (find(part=part, muscles=muscles), [])
         self.controls = {k: v for k, v in self.controls.items() if v[0] or v[1]}
-        self.limits = _leg_limits()
-        self.clipped = {}                    # control -> True while a joint sits at its limit
-        # how far each control can go before a joint hits its limit (1 = the full range is reachable)
+        self.ranges = _leg_ranges()
+        # spans stay inside the hard limits, so every control's full range is reachable (reach = 1);
+        # kept as a hook for controls whose joints would saturate
         self.reach = {}
-        for leg in LEGS:
-            for dof, terms in LEG_JOINTS.items():
-                lo, hi = self.limits.get(leg, {}).get(dof, (-9, 9))
-                for c, g in terms:
-                    gg = -g if (dof in MIRRORED and leg[0] == "R") else g
-                    for d in (+1, -1):
-                        off = gg * d                          # joint offset at full activation this way
-                        room = hi if off > 0 else -lo
-                        frac = min(1.0, max(0.0, room / abs(off))) if off else 1.0
-                        k = (f"{leg}.{c}", d)
-                        self.reach[k] = min(self.reach.get(k, 1.0), frac)
         self.value = {k: 0.0 for k in self.controls}
 
     # ------------------------------------------------------------------ per frame
@@ -226,22 +227,25 @@ class Motor:
         v = self.value
         legs = {}
         for leg in LEGS:
+            rng = self.ranges.get(leg, {})
             d = {}
             for dof, terms in LEG_JOINTS.items():
-                x = sum(g * v.get(f"{leg}.{c}", 0.0) for c, g in terms)
+                r = rng.get(dof, {"span": 0.4, "limit": 0.6})
+                x = sum(direction * _shape(v.get(f"{leg}.{c}", 0.0), r) for c, direction in terms)
                 if dof in MIRRORED and leg[0] == "R":
                     x = -x
                 d[dof] = x
             # the jump muscle (tergotrochanter, TTMn) kicks the middle legs straight down
             j = self.index.get(f"{leg}.jump_ttm")
             if j is not None:
-                d["Femur"] += 1.3 * float(self.act[j])
-                d["Tibia"] -= 0.8 * float(self.act[j])
+                a = float(self.act[j])
+                d["Femur"] += 2.0 * a * rng.get("Femur", {"span": 0.4})["span"]
+                d["Tibia"] -= 1.5 * a * rng.get("Tibia", {"span": 0.4})["span"]
             # the skeleton only goes so far
-            lim = self.limits.get(leg, {})
             for dof in d:
-                if dof in lim:
-                    d[dof] = min(max(d[dof], lim[dof][0]), lim[dof][1])
+                lim = rng.get(dof, {}).get("limit")
+                if lim is not None:
+                    d[dof] = min(max(d[dof], -lim), lim)
             legs[leg] = {k: round(x, 4) for k, x in d.items()}
         wings = {s: {"power": round(max(v.get("wingL.power", 0), v.get("wingR.power", 0)), 3),
                      "extend": round(max(0.0, v.get(f"wing{s}.extend", 0)), 3),

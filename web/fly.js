@@ -117,18 +117,12 @@ export async function createFlyView(dom) {
 
   // ---------------------------------------------------------------- recorded steps (NeuroMechFly)
   const S = meta.steps;
-  function stepAngles(leg, phase) {
-    const n = S.n;
-    const x = ((phase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI) / (2 * Math.PI) * (n - 1);
-    const i = Math.floor(x), f = x - i, j = (i + 1) % n;
-    const out = {};
-    for (const d of STEP_DOFS) {
-      const a = S.legs[leg][d];
-      out[d] = a[i] * (1 - f) + a[j] * f;
-    }
-    return out;
-  }
-  const neutral = Object.fromEntries(LEGS.map(l => [l, stepAngles(l, Math.PI)]));
+  // resting pose: the middle of the range each joint uses in recorded walking (server/motor.py uses
+  // the same centre, and sends offsets from it)
+  const neutral = Object.fromEntries(LEGS.map(l => [l, Object.fromEntries(STEP_DOFS.map(d => {
+    const a = S.legs[l][d];
+    return [d, (Math.min(...a) + Math.max(...a)) / 2];
+  }))]));
 
   const jmap = {};
   for (const n of Object.values(nodes)) for (const j of n.userData.joints) jmap[j.name] = j;
@@ -184,8 +178,7 @@ export async function createFlyView(dom) {
   const matsWhere = re => Object.entries(mats).filter(([n]) => re.test(n)).map(([, m]) => m);
   const glowGroups = {
     ...Object.fromEntries(LEGS.map(l => [l, matsWhere(new RegExp(`^${l}(Coxa|Femur|Tibia|Tarsus)`))])),
-    wingL: [mats.LWing, mats.Thorax].filter(Boolean), wingR: [mats.RWing, mats.Thorax].filter(Boolean),
-    head: [mats.Head].filter(Boolean),
+    wingL: [mats.LWing].filter(Boolean), wingR: [mats.RWing].filter(Boolean),
     haltereL: [mats.LHaltere].filter(Boolean), haltereR: [mats.RHaltere].filter(Boolean),
     abdomen: ['A1A2', 'A3', 'A4', 'A5', 'A6'].map(n => mats[n]).filter(Boolean),
     proboscis: [mats.Rostrum, mats.Haustellum].filter(Boolean),
@@ -206,12 +199,13 @@ export async function createFlyView(dom) {
     qc.setFromAxisAngle(Y, pitch);
     return out.copy(qa).multiply(qb).multiply(qc).multiply(qBase[side]);
   }
-  const FOLD = 1.66, MID = 0.35;         // radians: folded back over the abdomen / middle of the flight stroke
+  const FOLD = 1.66, MID = 0.35;
+  const qRoll = new THREE.Quaternion();         // radians: folded back over the abdomen / middle of the flight stroke
 
   function update(dt) {
     t += dt;
     const J = st.joints;
-    const k = Math.min(1, dt * 18);
+    const k = Math.min(1, dt * 10);   // smooth the 30 Hz joint stream
     // legs: resting pose + offsets computed from muscle activation
     for (const leg of LEGS) {
       const off = J?.legs?.[leg] || {};
@@ -229,7 +223,8 @@ export async function createFlyView(dom) {
     wingPhase += dt * 2 * Math.PI * (beating ? 7 + 5 * Math.min(1, power) : 0);   // shown ~25x slower than 200 Hz
     for (const side of ['L', 'R']) {
       const w = W[side] || {};
-      const spread = sm('spread' + side, Math.min(1, Math.max(w.extend || 0, beating ? 1 : 0)), Math.min(1, dt * 5));
+      // posture muscles only lift the wing out of its folded position when clearly active
+      const spread = sm('spread' + side, Math.min(1, Math.max(Math.max(0, ((w.extend || 0) - 0.3) / 0.7), beating ? 1 : 0)), Math.min(1, dt * 5));
       const amp = beating ? Math.min(1.25, 0.55 + 0.6 * power + 0.35 * (w.stroke || 0)) : 0;
       const rest = FOLD + (MID - FOLD) * spread;
       const node = nodes[side + 'Wing'];
@@ -284,14 +279,18 @@ export async function createFlyView(dom) {
       const P = st.parts || {};
       for (const [key, list] of Object.entries(glowGroups)) {
         const v = Math.min(1, P[key] || 0);
-        if (v > 0.03) for (const mat of list) mat.emissive.lerp(HOT, v * 0.6);
+        if (v > 0.12) for (const mat of list) mat.emissive.lerp(HOT, (v - 0.1) * 0.4);
       }
     }
 
     // ball turns under walking legs
     const ball_ = st.ball || [0, 0];
-    ball.rotation.y += (ball_[0] / ballR) * dt * -1;       // walking forwards rolls the ball backwards
-    ballPivot.rotation.z += ball_[1] * dt * 0.6;             // turning spins it underneath
+    // Roll the ball in the fly's own frame (it faces +x, head forward): walking forwards rolls the ball's
+    // top backwards (about the fly's side-to-side axis), backwards the other way, and turning spins it
+    // about the vertical. Rotations are applied about these fixed axes every frame, so they stay tied to
+    // the fly's heading however far the ball has already turned.
+    ball.quaternion.premultiply(qRoll.setFromAxisAngle(Y, -(ball_[0] / ballR) * dt));
+    ball.quaternion.premultiply(qRoll.setFromAxisAngle(Z, ball_[1] * dt * 0.6));
 
     // stimuli
     if (st.loom) {

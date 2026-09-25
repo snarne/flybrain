@@ -345,8 +345,30 @@ class SkillEngine:
         score = float(np.mean(list(per.values()))) * max(0.0, 1.0 - 1.5 * crosstalk)
         return score, per, cross, ach
 
-    def adjust(self, drivers, tracks, ach, cross):
+    def adjust(self, drivers, tracks, ach, cross, per=None, attempt=0):
         changed = []
+        # fine control: a movement that upstream drivers only get roughly right after a few tries gets
+        # its own motor neurons added as a trim, driven by the remaining error (like the fine
+        # corrections premotor circuits make); the upstream drivers keep doing the bulk of it
+        if per and attempt >= 3:
+            for k, sc in per.items():
+                if sc >= 0.7:
+                    continue
+                for d in (+1, -1):
+                    if (k, d) not in self.ch_index or any(x["control"] == k and x["dir"] == d and x["level"] == "motor" for x in drivers):
+                        continue
+                    tgt = np.clip(d * tracks[k], 0, None)
+                    if tgt.max() < 0.1:
+                        continue
+                    got = np.clip(d * ach[k], 0, None)
+                    got = np.concatenate([got[2:], np.full(2, got[-1])])
+                    pools = self.m.controls[k][0 if d > 0 else 1]
+                    mns = sorted({n for i in pools for n in self.m.pools[i]["neurons"]})
+                    rates = np.clip(BASE_HZ * np.clip(tgt - got, 0, None), 0, MAX_HZ)
+                    drivers.append({"channel": f"{k}{'+' if d > 0 else '-'}", "control": k, "dir": d, "level": "motor",
+                                    "level_i": LEVELS.index("motor"), "neurons": mns, "gain": 1.0, "tried": list(mns),
+                                    "rates": rates.round(0).tolist(), "trim": True})
+                    changed.append(f"{k}{'+' if d > 0 else '-'}: fine trim at its motor neurons")
         lag = 2                       # bins (40 ms): the muscle answers the drive this much later
         for d in drivers:
             tgt = np.clip(d["dir"] * tracks[d["control"]], 0, None)
@@ -442,7 +464,7 @@ class SkillEngine:
                            "per_control": {k: round(v, 2) for k, v in per.items()}})
                 if score >= 0.8 or a == attempts:
                     break
-                changes = self.adjust(drivers, tracks, ach, cross)
+                changes = self.adjust(drivers, tracks, ach, cross, per, a)
                 self.emit({"type": "skill", "event": "adjust", "name": name, "changes": changes})
                 if not changes:
                     break
