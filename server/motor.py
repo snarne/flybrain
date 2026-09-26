@@ -10,16 +10,20 @@ muscle on the same side form a pool. Each frame:
 The joint angles drive the NeuroMechFly body in the viewer. Nothing here is scripted: if no motor
 neuron fires, nothing moves.
 
-"Controls" are the handful of named movements the skill engine and the LLM talk about (per leg:
-swing, lift, reach, grip, spread; wings: extend, power, stroke per side; head yaw/pitch; proboscis).
-Each control has the muscles that push it one way (+) and the other way (-).
+"Controls" are the named movements the skill engine and the LLM talk about: per leg swing, roll,
+lift, reach, grip, spread and twist (every joint of the leg; the coxa's roll moves with its swing), the middle legs' jump
+muscle, wings power / extend / stroke per side, head, proboscis, antennae, halteres and abdomen.
+Each control has the muscles that push it one way (+) and the other way (-); every leg muscle belongs
+to exactly one control.
 
 Mapping notes (approximate where the literature is thin, and said so in the UI):
-- Legs (Azevedo et al. 2024, Soler et al. 2004): thorax-coxa promotor/remotor and rotators swing the
-  leg forward/back; trochanter flexors lift the femur, trochanter extensors (incl. the jump muscle,
-  tergotrochanter) push it down. The jump muscle's own motor neuron (TTMn) is kept out of the controls:
-  only the giant fibre fires it, for the escape jump; tibia flexors fold, the tibia extensor reaches; tarsus depressor and
-  long tendon grip, the levator raises the tarsus.
+- Legs (Azevedo et al. 2024, Soler et al. 2004): the thorax-coxa promotor/remotor swing the leg
+  forward/back (with the sternal anterior/posterior rotators, which also roll the coxa; the middle
+  and hind legs have no promotor and swing by rotating the coxa); trochanter flexors lift the
+  femur, trochanter extensors push it down; tibia flexors fold, the tibia extensor reaches; tarsus
+  depressor and long tendon grip, the levator raises the tarsus; the adductor pulls the leg in; the
+  femur reductor twists the femur. The middle legs' jump muscle (tergotrochanter, TTMn: the giant
+  fibre's escape output) is its own control, "jump".
 - Wings: indirect power muscles (DLM, DVM) set flight power; direct steering muscles (b1, b2 increase
   stroke amplitude; i1, i2, iii1-4 decrease it; ps, tp and b3 hold the wing in flight posture)
   (Lindsay et al. 2017; Muijres et al. 2014).
@@ -39,12 +43,14 @@ SAT_HZ = 80.0     # pool mean rate at which a muscle counts as fully active
 # ~5-20 Hz (the 200 Hz wingbeat comes from the muscles' own stretch activation)
 SAT_LOW = {"jump_ttm": 20.0, "dorsal_longitudinal": 15.0, "dorsoventral": 15.0}
 TAU_S = 0.03      # muscle activation time constant
-RATE_TAU_S = 0.06  # smoothing of each pool's firing-rate estimate (spikes are counted per 33 ms frame)
+RATE_TAU_S = 0.02  # smoothing of each pool's firing-rate estimate (spikes are counted per 33 ms frame): short, so the
+                   # muscles can follow a 5-10 Hz stepping rhythm (with 60 ms, the joints got only a third of it)
 
 LEGS = ["LF", "LM", "LH", "RF", "RM", "RH"]
 
 # per-leg controls: (muscles for +, muscles for -)
 LEG_CONTROLS = {
+    # (the middle and hind legs have no promotor: their coxae swing forwards by rotating)
     "swing": (["tergopleural_promotor", "sternal_anterior_rotator"], ["pleural_remotor_and_abductor", "sternal_posterior_rotator"]),
     "lift": (["trochanter_flexor", "accessory_trochanter_flexor"], ["trochanter_extensor", "sternotrochanter_extensor", "tergotrochanter_extensor"]),
     "reach": (["tibia_extensor"], ["tibia_flexor", "accessory_tibia_flexor"]),
@@ -53,6 +59,7 @@ LEG_CONTROLS = {
     # so "spread" is only the adductor pulling the leg in (and the leg relaxing back out)
     "spread": ([], ["sternal_adductor"]),
     "twist": (["femur_reductor"], []),
+    "jump": (["jump_ttm"], []),          # middle legs only (the others have no such muscle)
 }
 WING_CONTROLS = {
     "power": (["dorsal_longitudinal", "dorsoventral"], []),                       # both sides' indirect muscles
@@ -89,6 +96,10 @@ LEG_JOINTS = {
     "Femur_roll": [("twist", 1)],    # mirrored for right legs
 }
 MIRRORED = {"Coxa_yaw", "Femur_roll"}
+# The coxa's roll has no muscles of its own: the same thorax-coxa muscles that swing the leg roll it,
+# because the joint's axis is oblique. It follows the swing as it does in a walking fly (the slope of
+# roll against swing in the recorded steps, per leg: see _leg_ranges).
+COUPLED = {"Coxa_roll": "Coxa"}
 SPAN_SCALE = 1.2                     # a little beyond walking...
 SPAN_SCALE_FRONT = 1.7               # ...and more for the front legs, which also groom and reach
 # Hard joint limits: the walking range widened by this fraction of itself (+ a fixed margin, rad).
@@ -127,6 +138,11 @@ def _leg_ranges():
             sc = SPAN_SCALE_FRONT if front else SPAN_SCALE
             lim = half * (1 + LIMIT_FRAC) + LIMIT_ABS + (LIMIT_FRONT_EXTRA if front else 0)
             out[leg][dof] = {"centre": (lo + hi) / 2, "half": half, "span": half * sc, "limit": max(lim, half * sc)}
+        for dof, src in COUPLED.items():
+            if dof in dofs and src in dofs:
+                a, b = np.asarray(dofs[src], float), np.asarray(dofs[dof], float)
+                a0, b0 = a - a.mean(), b - b.mean()
+                out[leg][dof]["follows"] = (src, float(a0 @ b0 / max(a0 @ a0, 1e-9)))
     return out
 
 
@@ -234,11 +250,15 @@ class Motor:
             rng = self.ranges.get(leg, {})
             d = {}
             for dof, terms in LEG_JOINTS.items():
-                r = rng.get(dof, {"span": 0.4, "limit": 0.6})
+                r = rng.get(dof, {"span": 0.4, "limit": 0.6, "half": 0.3})
                 x = sum(direction * _shape(v.get(f"{leg}.{c}", 0.0), r) for c, direction in terms)
                 if dof in MIRRORED and leg[0] == "R":
                     x = -x
                 d[dof] = x
+            for dof, r in rng.items():
+                if "follows" in r:
+                    src, slope = r["follows"]
+                    d[dof] = slope * d.get(src, 0.0)
             # the jump muscle (tergotrochanter, TTMn) kicks the middle legs straight down
             j = self.index.get(f"{leg}.jump_ttm")
             if j is not None:
@@ -272,6 +292,8 @@ class Motor:
         for leg in LEGS:
             for dof, terms in LEG_JOINTS.items():
                 stiff[(leg, dof)] = float(min(1.0, sum(self.cocon.get(f"{leg}.{c}", 0.0) for c, _ in terms)))
+            for dof, src in COUPLED.items():
+                stiff[(leg, dof)] = stiff.get((leg, src), 0.0)
             j = self.index.get(f"{leg}.jump_ttm")
             if j is not None:        # the jump muscle is the strongest in the leg: it stiffens the kick
                 a = float(self.act[j])

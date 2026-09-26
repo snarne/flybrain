@@ -17,13 +17,14 @@ The label on screen ("Feeding", "Escape jump", ...) is read from what the muscle
 some hysteresis so a brief twitch doesn't flip it back and forth.
 
 Rules from fly physiology the connectome alone doesn't give:
-- Feet on the ground stop flight (tarsal reflex): the flight motor only runs once no foot has touched
-  the ground for a moment, e.g. after the giant-fibre jump.
-- Rhythms: walking and grooming need nerve-cord rhythm generators, which the connectome model doesn't
-  produce by itself. Two settings: "neurons": the walking command neurons (P9, MDN, DNa01/02, ...)
-  set six leg oscillators stepping with a real fly's recorded steps (locomotion.py), the legs' premotor
-  neurons firing along (cpg.py), and the aDN grooming neurons play the grooming movement (a built-in
-  skill); "off": only what the wiring does by itself.
+- Feet on the ground stop flight (tarsal reflex): the flight motor only runs once no foot touches the
+  ground while the flight power muscles fire.
+Hand-built parts (ASSISTS), each switchable; skills practise with them off:
+- The walking model: the walking command neurons (P9, MDN, DNa01/02, ...) set six leg oscillators
+  stepping with a real fly's recorded steps (locomotion.py), the legs' premotor neurons firing along
+  (cpg.py), and the aDN grooming neurons play a recorded grooming movement (a built-in skill). The
+  nerve cord's rhythm circuits aren't in the connectome model.
+- The flight timer: a jump starts flight at once, and flight power is held at cruise, then eased off.
 """
 import json
 import math
@@ -46,6 +47,17 @@ ACTIVATE = {
     "adn": ("DNg62", "aDN1 / DNg62: antennal grooming (Hampel et al. 2015)"),
 }
 RHYTHMS = ("neurons", "off")
+# The parts of the body that are built by hand rather than coming from the connectome. Each can be
+# switched off; practice (skills.py) runs with them off by default, so what a skill learns is the
+# neurons' and muscles' own work, and the built-in versions become baselines to beat.
+ASSISTS = {
+    "walking": "Walking model: when the walking command neurons (P9, MDN, DNa01/02) fire, six leg oscillators step "
+               "the legs with a recorded fly's steps (locomotion.py), and when the aDN grooming neurons fire a "
+               "recorded grooming movement plays. Off: the legs do only what their motor neurons do.",
+    "flight_timer": "Flight timer: a jump starts flight at once, and flight power is held at cruise for 1.5 s, then "
+                    "eased off so the fly lands. Off: flight power is only what the wing power motor neurons give "
+                    "(the flight motor still only runs with the feet off the ground).",
+}
 FLIGHT_CRUISE = 0.85     # flight power kept up once airborne (a hover needs ~0.8)
 FLIGHT_SINK = 0.55       # ... easing off to this, so the fly sinks and lands
 FLIGHT_HOLD = 1.5        # s of cruising before easing off
@@ -60,7 +72,9 @@ LEGS = ("LF", "LM", "LH", "RF", "RM", "RH")
 class Body:
     def __init__(self, world):
         self.w = world
-        self.rhythm = "neurons"      # "neurons" | "off" (see the module docstring)
+        self.rhythm = "neurons"      # "neurons" | "off" (see the module docstring): the walking model on or off
+        self.assists = {k: True for k in ASSISTS}
+        self.assist_override = None  # while a learned skill plays: the switches it was learned with
         self.phys_lock = threading.RLock()
         self.walker = loco_mod.Walker()  # the legs' stepping, commanded by descending neurons (rhythm "neurons")
         self.phys = None             # physics.PhysicsBody when the physical body is on
@@ -94,12 +108,26 @@ class Body:
         if mode not in RHYTHMS:
             return
         self.rhythm = mode
+        self.assists["walking"] = mode == "neurons"
         cpg = getattr(self.w, "cpg", None)
         if cpg is not None:
             cpg.enable(mode == "neurons")
         eng = getattr(self.w, "skills", None)
         if mode == "off" and eng is not None and eng.state and eng.state.get("kind") == "reflex":
             eng.stop()
+
+    def set_assist(self, name, on):
+        """Switch a hand-built part (ASSISTS) on or off."""
+        if name == "walking":
+            self.set_rhythm("neurons" if on else "off")
+        elif name in ASSISTS:
+            self.assists[name] = bool(on)
+
+    def assist(self, name):
+        o = self.assist_override
+        if o is not None and name in o:
+            return bool(o[name])
+        return self.assists.get(name, True)
 
     def neurons_for(self, spec):
         t, _, side = spec.partition(":")
@@ -277,10 +305,11 @@ class Body:
         self.rates = r
         v = motor.value
         eng = getattr(self.w, "skills", None)
-        rx = self._reflex_for(r) if self.rhythm == "neurons" else None
+        walking_model = self.assist("walking")
+        rx = self._reflex_for(r) if walking_model else None
         W = self.walker
         moving_skill = eng is not None and eng.state and not eng.state.get("command")
-        if self.rhythm == "neurons" and not moving_skill:
+        if walking_model and not moving_skill:
             cpg = getattr(self.w, "cpg", None)
             r_all = self.w.all_readouts() if hasattr(self.w, "all_readouts") else r
             # only the walking and steering command neurons command walking: the summed wiring influence of
@@ -322,8 +351,9 @@ class Body:
             # an escape jump starts flight straight away: the giant fibre drives the flight power muscles
             # (via PSI) as well as the jump muscle
             self._jump_t = 0.0 if jump > 0.3 else self._jump_t + dt
-            took_off = self._jump_t < 0.5 and self._untouched > 0.03
-            if not self.airborne and (took_off or (self._untouched > 0.1 and power > 0.2)):
+            timer = self.assist("flight_timer")
+            took_off = timer and self._jump_t < 0.5 and self._untouched > 0.03
+            if not self.airborne and (took_off or (self._untouched > (0.1 if timer else 0.03) and power > 0.2)):
                 self.airborne, self.air_t, self.flight_t = True, 0.0, 0.0
             elif self.airborne:
                 self.flight_t += dt
@@ -337,7 +367,9 @@ class Body:
                 self.flight_t += dt
                 if self.flight_t > FLIGHT_HOLD + FLIGHT_EASE:
                     self.airborne = False
-        if self.airborne:
+        if self.airborne and not self.assist("flight_timer"):
+            self.flight_power = power               # only what the wing power motor neurons give
+        elif self.airborne:
             ease = min(1.0, max(0.0, (self.flight_t - FLIGHT_HOLD) / FLIGHT_EASE))
             self.flight_power = max(power, FLIGHT_CRUISE + (FLIGHT_SINK - FLIGHT_CRUISE) * ease)
         else:
@@ -438,7 +470,7 @@ class Body:
                 return
             self.sensed = ph.step(dt, *self._cmd)
         eng = getattr(self.w, "skills", None)
-        moving = bool(eng is not None and eng.state) or self.walker.w > 0.1 or self.rhythm == "neurons" and self.mode in ("legs", "groom")
+        moving = bool(eng is not None and eng.state) or self.walker.w > 0.1 or self.assist("walking") and self.mode in ("legs", "groom")
         rates = self.fb.rates(self.sensed, moving, dt)
         if rates != self.fb_rates:
             self.fb_rates = rates
@@ -495,7 +527,8 @@ class Body:
     def physics_info(self):
         ph = self.phys
         info = {"on": ph is not None, "available": physics_mod.available(), "error": self.phys_error,
-                "rhythm": self.rhythm, "rhythms": self.rhythms, "feedback": self.fb.gain}
+                "rhythm": self.rhythm, "rhythms": self.rhythms, "feedback": self.fb.gain,
+                "assists": dict(self.assists), "assist_override": self.assist_override}
         if ph is not None:
             info.update({"cost": round(ph.cost, 2), "touch": self.sensed["touch"] if self.sensed else {},
                          "senses": {k: v for k, v in self.fb_summary.items() if v > 0}})

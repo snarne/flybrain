@@ -116,38 +116,76 @@ TOOLS = [
         "saved runs.", {"labels": {"type": "array", "items": {"type": "string"}}}),
     _fn("list_skills", "List the movements your body has already learned (your motor skill cache). Check this "
         "before learning something new: a learned skill can be done instantly with do_skills.", {}),
-    _fn("learn_skill", "Teach your fly body a NEW movement it has never done (e.g. tapping a key, waving a leg). "
-        "You plan it as keyframes of motor controls; the engine then searches the connectome for neurons to drive "
-        "(descending neurons first, then nerve-cord premotor neurons, motor neurons only as a last resort), and "
-        "the fly practises a few times while the user watches, keeping the best. Slow the first time (several "
-        "seconds); afterwards the skill is saved and replayed instantly. Controls (values -1..1, linear between "
-        "keyframes, unlisted controls stay relaxed at 0): per leg LF LM LH RF RM RH (front/middle/hind, left/right): "
-        "<leg>.swing (+ forward / - back), <leg>.lift (+ raise the femur / - press down), <leg>.reach (+ extend the "
-        "tibia / - fold it), <leg>.grip (+ press the tarsus down / - raise it), <leg>.spread (- pull the leg in towards the body, 0 relaxed); "
-        "wingL/wingR .power (flight muscles, 0..1), .extend (hold the wing out, 0..1), .stroke (+ bigger / - smaller "
-        "wingbeat); head.yaw (+ left), head.pitch (+ up), head.roll; proboscis.rostrum / .haustellum / .labellum "
-        "(extend, 0..1), proboscis.pump; antennaL, antennaR; haltereL, haltereR; abdomen.curl (0..1), abdomen.bend "
-        "(+ left / - right). The joints have real limits (a fly's leg can't bend backwards or spin), so extreme or "
-        "impossible targets get clipped and you'll be told which. Keep movements short (0.3-2 s) and make one skill per "
-        "reusable unit (e.g. one tap), then chain them with do_skills.",
+    _fn("learn_skill", "Teach your fly body a NEW movement. You plan it as keyframes of motor controls (read "
+        "motor_reference first) and, when the movement has a purpose, a goal (what it should achieve). The engine "
+        "searches the connectome for neurons to drive (descending neurons first, then nerve-cord premotor neurons, motor "
+        "neurons last), shapes the drive until the muscles follow your plan, then practises many variations in background "
+        "copies of the fly (the live fly keeps running) and keeps the one that scores best on the goal, checked again on "
+        "fresh noise. Hand-built parts (walking model, flight timer) are off in practice, so the result is the neurons' "
+        "and muscles' own work; give a baseline (e.g. walk_forward) to compare. Saved afterwards and shown once on the "
+        "live fly. Takes about a minute or more (more trials, longer). Controls (values -1..1, linear between keyframes, "
+        "unlisted stay relaxed at 0): per leg LF LM LH RF RM RH: <leg>.swing, .lift, .reach, .grip, .spread, .twist, "
+        "and LM.jump / RM.jump (the jump muscle); wingL/wingR .power, .extend, .stroke; head.yaw/.pitch/.roll; "
+        "proboscis.rostrum/.haustellum/.labellum/.pump; antennaL/R; haltereL/R; abdomen.curl/.bend.",
         {"name": {"type": "string", "description": "short snake_case name, e.g. tap_front_left"},
          "description": {"type": "string", "description": "what the movement is, in a few words"},
          "duration": {"type": "number", "description": "seconds, 0.2-6"},
          "keyframes": {"type": "array", "description": "e.g. [{\"t\": 0, \"LF.lift\": 0}, {\"t\": 0.15, \"LF.lift\": 0.9, "
                        "\"LF.reach\": 0.5}, {\"t\": 0.35, \"LF.lift\": -0.6, \"LF.grip\": 0.8}, {\"t\": 0.5, \"LF.lift\": 0, \"LF.grip\": 0}]",
-                       "items": {"type": "object"}}},
-        ["name", "description", "keyframes"]),
-    _fn("motor_reference", "Everything you need to plan an accurate movement: every motor control and what it "
-        "moves, how far each leg joint can go (degrees), how fast real flies move, and the keyframe timelines of "
-        "the built-in grooming skill as a worked example (walking and turning are do_skills walk_forward, walk_backward, turn_left, turn_right: they activate command neurons). Read it before planning a new skill.", {}),
-    _fn("refine_skill", "Improve a learned skill with a corrected plan (e.g. after comparing the planned vs achieved "
-        "timeline learn_skill returned). Keeps the neurons already found and practises again; the better version is kept.",
+                       "items": {"type": "object"}},
+         "goal": {"anyOf": [{"type": "string"}, {"type": "object"}], "description": "what the movement should achieve: a preset (forward, backward, turn_left, turn_right, "
+                  "jump_high, jump_far, fly, still, match_plan) or {metric: weight}, e.g. {\"forward_mm\": 1, "
+                  "\"wing_power\": -2} or {\"turn_deg\": {\"target\": 90}}. Metrics: forward_mm, side_mm, distance_mm, "
+                  "speed_mm_s, turn_deg, height_mm, airtime_s, upright, fell, wing_power, jump, unwanted, tracking, effort. "
+                  "Without a goal the engine only makes the muscles follow the plan."},
+         "trials": {"type": "integer", "description": "practice tries for the goal, default 40 (more = better, slower)"},
+         "baseline": {"type": "string", "description": "a skill to measure the same way for comparison, e.g. walk_forward"},
+         "assists": {"type": "object", "description": "hand-built parts to allow in practice, e.g. {\"flight_timer\": true}; "
+                     "default all off"},
+         "gait": {"type": "object", "description": "instead of keyframes, a walking plan made from a real fly's recorded "
+                  "steps (all joints of all six legs, tripod gait): {\"steps_per_s\": 5, \"duration\": 2, \"backwards\": false, "
+                  "\"turn\": 0} (turn -1..1, + = left)"},
+         "drive_at": {"type": "string", "enum": ["auto", "nerve_cord", "motor"], "description": "where the drive goes in: "
+                      "auto (default: descending neurons first, the brain's own routes), nerve_cord (premotor and motor "
+                      "neurons), motor (motor neurons directly: the most precise, but it bypasses the wiring above them, "
+                      "so say so when you report it)"}},
+        ["name", "description"]),
+    _fn("motor_reference", "Everything you need to plan a movement: every motor control and what it moves, joint ranges "
+        "(degrees), real fly timing, the physics and the body model's simplifications, the hand-built parts, and the goal "
+        "metrics and presets for practice. Read it before planning a new skill.", {}),
+    _fn("refine_skill", "Improve one of your learned skills: practise it more for its goal (no keyframes: continue from "
+        "the saved drive), or for a new goal, or from a corrected plan (keyframes: keeps the neurons already found). The "
+        "skill as it was competes with the new versions; the best is kept.",
         {"name": {"type": "string"}, "keyframes": {"type": "array", "items": {"type": "object"}},
-         "duration": {"type": "number"}, "description": {"type": "string"}}, ["name", "keyframes"]),
-    _fn("do_skills", "Perform learned skills on the fly body, in order (e.g. to type a word: alternate tap skills, one "
-        "per letter). Instant: replays the saved neuron drive.",
+         "duration": {"type": "number"}, "description": {"type": "string"}, "goal": {"anyOf": [{"type": "string"}, {"type": "object"}], "description": "as in learn_skill"},
+         "trials": {"type": "integer"}, "baseline": {"type": "string"}, "assists": {"type": "object"},
+         "drive_at": {"type": "string", "enum": ["auto", "nerve_cord", "motor"], "description": "with keyframes: where "
+                      "the drive goes in (as in learn_skill)"}}, ["name"]),
+    _fn("test_skill", "Measure what a skill does, in background copies of the fly (the live fly isn't touched): how far "
+        "it moved and turned, height, time in the air, whether it fell, which muscles it used, averaged over a few runs. "
+        "Use it to compare skills (a learned one against a built-in one), or one skill with and without a hand-built part "
+        "(assists), or under a different goal.",
+        {"name": {"type": "string"}, "assists": {"type": "object", "description": "e.g. {\"walking\": false}"},
+         "goal": {"anyOf": [{"type": "string"}, {"type": "object"}], "description": "as in learn_skill; default the skill's own"}, "runs": {"type": "integer", "description": "1-10, default 3"},
+         "duration": {"type": "number", "description": "seconds, for built-in walking/turning (default 2)"}}, ["name"]),
+    _fn("do_skills", "Perform learned skills on the live fly body, in order (e.g. to type a word: alternate tap skills, "
+        "one per letter). Instant: replays the saved neuron drive, with the hand-built parts as they were when the skill "
+        "was learned.",
         {"names": {"type": "array", "items": {"type": "string"}}, "repeat": {"type": "integer", "description": "1-20, default 1"}},
         ["names"]),
+    _fn("body_parts", "See or switch the live body's hand-built parts: walking (the walking model that steps the legs "
+        "when the walking command neurons fire) and flight_timer (a jump starts flight and power is held at cruise). "
+        "With no arguments, says what each is and whether it's on.",
+        {"walking": {"type": "boolean"}, "flight_timer": {"type": "boolean"}}),
+    _fn("guide", "Read the guide to this system: how the brain, muscles, body and practice work, what is real "
+        "connectome and what is hand-built, what each tool is for, and the Python helper (flylab) and HTTP API for "
+        "scripts. Topics: overview, body, skills, neuroscience, scripts, limits. Read 'overview' when you start on a task "
+        "about the fly, and 'scripts' before writing code that talks to it.",
+        {"topic": {"type": "string", "enum": ["overview", "body", "skills", "neuroscience", "scripts", "limits"]}}, ["topic"]),
+    _fn("api_get", "Read from the fly's local HTTP API (read-only GET, no approval needed), e.g. /api/status, "
+        "/api/body, /api/skills, /api/skill/<name>, /api/controls, /api/rates?types=DNp01,MDN, /api/typeinfo/<type>, "
+        "/api/path?src=LC4&dst=DNp01, /api/search?q=<text>. See guide('scripts').",
+        {"path": {"type": "string"}}, ["path"]),
     _fn("brain_status", "Read your fly brain right now: behaviour readouts, most active regions and neurons.", {}),
 ]
 
@@ -455,7 +493,8 @@ class ToolRunner:
                "--variant", variant or "real", "--out", str(out)]
         body = getattr(self.world, "body", None)
         if body is not None:
-            cmd += ["--body", "physics" if body.phys is not None else "kinematic", "--rhythm", body.rhythm]
+            cmd += ["--body", "physics" if body.phys is not None else "kinematic", "--rhythm", body.rhythm,
+                    "--flight-timer", "on" if body.assists.get("flight_timer", True) else "off"]
         if experiments:
             cmd += ["--only", ",".join(experiments)]
         if ablate:
@@ -500,27 +539,77 @@ class ToolRunner:
         lst = eng.list()
         if not lst:
             return "No skills learned yet. Use learn_skill to teach one.", True, {}
-        return "\n".join(f"- {s['name']}{' (built in)' if s['builtin'] else ''}: {s['description']} ({s['duration']:.2f} s, "
-                         f"score {s['score']:.2f}, driven via {', '.join(s['levels'])}, used {s['uses']}x)" for s in lst), True, {}
+        rows = []
+        for sk in lst:
+            what = (f"goal: {sk['goal']}; score {sk['score']}; {_metrics_brief(sk['metrics'])}" if sk.get("goal")
+                    else "activates the walking command neurons (the walking model steps)" if sk.get("command")
+                    else f"muscles followed the plan {sk['score']:.2f}" + (f"; {_metrics_brief(sk['metrics'])}" if sk.get("metrics") else ""))
+            on = [k for k, v in (sk.get("assists") or {}).items() if v]
+            parts = "" if sk.get("command") or sk.get("assists") is None else f"; hand-built parts: {', '.join(on) or 'none'}"
+            rows.append(f"- {sk['name']}{' (built in)' if sk['builtin'] else ''}: {sk['description']} "
+                        f"({(sk['duration'] or 0):.2f} s; {what}; driven via {', '.join(sk['levels'])}{parts}; used {sk['uses']}x)")
+        return "\n".join(rows), True, {}
 
-    async def t_learn_skill(self, name, description, keyframes, duration=None):
+    async def t_learn_skill(self, name, description, keyframes=None, duration=None, goal=None, trials=None, baseline=None,
+                            assists=None, gait=None, drive_at=None):
         eng = getattr(self.world, "skills", None)
         if eng is None:
             return "The body isn't running.", False, {}
         if eng.get(name):
-            return f"'{name}' is already learned (score {eng.get(name)['score']}). Use do_skills, or pick another name.", True, {}
-        r = await eng.learn(name, description, {"duration": duration, "keyframes": keyframes})
+            return (f"'{name}' is already learned (score {eng.get(name)['score']}). Use do_skills or test_skill, "
+                    f"refine_skill to improve it, or pick another name."), True, {}
+        if keyframes:
+            plan = {"duration": duration, "keyframes": keyframes}
+        elif gait:
+            try:
+                plan = eng.gait_plan(**{k: v for k, v in gait.items() if k in ("steps_per_s", "duration", "backwards", "turn")})
+            except (TypeError, ValueError) as e:
+                return f"Bad gait: {e}", False, {}
+        else:
+            return "Give keyframes (your plan) or gait (a walking plan from recorded steps).", False, {}
+        r = await eng.learn(name, description, plan, goal=goal, trials=trials, baseline=baseline, assists=assists,
+                            drive_at=drive_at)
         if not r.get("ok"):
             return f"Couldn't learn it: {r.get('error')}", False, {}
-        drv = "; ".join(f"{d['channel']} via {d['level_text']}: {', '.join(d['types'][:3])}" for d in r["drivers"])
-        tl = "; ".join(f"{k}: " + ", ".join(f"t={t} plan {p:+.2f} got {g:+.2f}" for t, p, g in pts)
-                       for k, pts in (r.get("timeline") or {}).items())
-        lim = (" Beyond what the skeleton allows, so clipped: " + "; ".join(r["limits"]) + ".") if r.get("limits") else ""
-        return (f"Learned '{name}' in {r['seconds']} s.{lim} Practice scores {r['attempts']} (best {r['score']}; 1.0 = the "
-                f"muscles did exactly what you planned). Per control: {r['per_control']}. Neurons driven: {drv}. "
-                f"Saved: do_skills can now replay it instantly. Planned vs achieved (control values, -1..1): {tl}. "
-                f"{_ball_text(r.get('ball'))}"
-                f"If something lags or overshoots, refine_skill with an adjusted timeline."), True, {}
+        return _learn_text(f"Learned '{name}'", r), True, {}
+
+    async def t_refine_skill(self, name, keyframes=None, duration=None, description=None, goal=None, trials=None,
+                             baseline=None, assists=None, drive_at=None):
+        eng = getattr(self.world, "skills", None)
+        if eng is None:
+            return "The body isn't running.", False, {}
+        old = eng.lib.get(name)
+        if not old:
+            return (f"'{name}' isn't one of your learned skills (built-in ones can't be changed). Learn it first, "
+                    f"or learn a new variant under another name."), False, {}
+        goal = goal if goal is not None else old.get("goal")
+        if goal is None and not keyframes:
+            return ("Give it a goal (what the movement should achieve) to practise for, or corrected keyframes."), False, {}
+        plan = {"duration": duration, "keyframes": keyframes} if keyframes else old["plan"]
+        r = await eng.learn(name, description or old.get("description", ""), plan, goal=goal, trials=trials,
+                            baseline=baseline, assists=assists if assists is not None else old.get("assists"),
+                            warm=old if not drive_at else None, keep_rates=not keyframes, drive_at=drive_at)
+        if not r.get("ok"):
+            return f"Couldn't refine it: {r.get('error')}", False, {}
+        before = f" Before: score {old.get('score')}, {_metrics_brief(old.get('metrics'))}." if old.get("metrics") else ""
+        return _learn_text(f"Refined '{name}'", r) + before, True, {}
+
+    async def t_test_skill(self, name, assists=None, goal=None, runs=3, duration=None):
+        eng = getattr(self.world, "skills", None)
+        if eng is None:
+            return "The body isn't running.", False, {}
+        try:
+            r = await eng.test(name, assists=assists, goal=goal, runs=runs, duration=duration)
+        except (ValueError, RuntimeError) as e:
+            return f"Couldn't test it: {e}", False, {}
+        if not r.get("ok"):
+            return f"Couldn't test it: {r.get('error')}", False, {}
+        on = [k for k, v in r["assists"].items() if v]
+        sc = f" Goal ({r['goal']}): score {r['score']}." if "score" in r else ""
+        spread = ", ".join(f"{k} ±{v}" for k, v in r["spread"].items() if k in ("forward_mm", "turn_deg", "height_mm") and v)
+        return (f"'{name}' in {r['runs']} runs of {r['duration']:.2f} s (+0.4 s after) in a practice copy, hand-built parts "
+                f"{'on: ' + ', '.join(on) if on else 'all off'}: {_metrics_brief(r['metrics'])}"
+                + (f" (run-to-run spread {spread})" if spread else "") + f".{sc}"), True, {}
 
     async def t_do_skills(self, names, repeat=1):
         eng = getattr(self.world, "skills", None)
@@ -529,8 +618,7 @@ class ToolRunner:
         r = await eng.perform(list(names), repeat)
         if not r.get("ok"):
             return f"Couldn't: {r.get('error')}", False, {}
-        return (f"Done: {', '.join(f'{n} ({s})' for n, s in r['performed'])} (numbers: how closely the muscles followed "
-                "the plan; for walking and turning, which activate command neurons, how the fly moved)."), True, {}
+        return f"Done on the live fly: {'; '.join(f'{n}: {s}' for n, s in r['performed'])}.", True, {}
 
     async def t_motor_reference(self):
         eng = getattr(self.world, "skills", None)
@@ -538,25 +626,99 @@ class ToolRunner:
             return "The body isn't running.", False, {}
         return eng.reference(), True, {}
 
-    async def t_refine_skill(self, name, keyframes, duration=None, description=None):
-        eng = getattr(self.world, "skills", None)
-        if eng is None:
+    async def t_body_parts(self, walking=None, flight_timer=None):
+        body = getattr(self.world, "body", None)
+        if body is None:
             return "The body isn't running.", False, {}
-        old = eng.lib.get(name)
-        if not old:
-            return (f"'{name}' isn't one of your learned skills (built-in ones can't be changed). Learn it first, "
-                    f"or learn a new variant under another name."), False, {}
-        r = await eng.learn(name, description or old.get("description", ""), {"duration": duration, "keyframes": keyframes},
-                            warm=old)
-        if not r.get("ok"):
-            return f"Couldn't refine it: {r.get('error')}", False, {}
-        if r["score"] < old.get("score", 0):
-            eng.lib[name] = old
-            eng._save()
-            return (f"The new version scored {r['score']} (old {old.get('score')}); kept the old one. "
-                    f"Planned vs achieved for the new plan: {r.get('timeline')}"), True, {}
-        tl = "; ".join(f"{k}: " + ", ".join(f"t={t} plan {p:+.2f} got {g:+.2f}" for t, p, g in pts)
-                       for k, pts in (r.get("timeline") or {}).items())
-        return (f"Refined '{name}': score {r['score']} (was {old.get('score')}), tries {r['attempts']}. "
-                f"Planned vs achieved: {tl}. {_ball_text(r.get('ball'))}"), True, {}
+        from body import ASSISTS
+        for k, v in (("walking", walking), ("flight_timer", flight_timer)):
+            if v is not None:
+                body.set_assist(k, v)
+        return "\n".join(f"- {k}: {'ON' if body.assists.get(k) else 'off'}. {t}" for k, t in ASSISTS.items()), True, {}
 
+    async def t_guide(self, topic="overview"):
+        return guide_section(topic), True, {}
+
+    async def t_api_get(self, path):
+        import urllib.parse
+        import urllib.request
+        path = "/" + str(path or "").lstrip("/")
+        if not path.startswith("/api/") or any(path.startswith(x) for x in ("/api/command", "/api/skills/learn",
+                                                                           "/api/skills/test")):
+            return "Only the read-only /api/... paths (GET). See guide('scripts').", False, {}
+        url = f"http://127.0.0.1:{os.environ.get('PORT', '8765')}{urllib.parse.quote(path, safe='/?=&,:._-')}"
+
+        def get():
+            with urllib.request.urlopen(url, timeout=30) as r:
+                return r.read().decode(errors="replace")
+        try:
+            text = await asyncio.to_thread(get)
+        except Exception as e:
+            return f"GET {path} failed: {e}", False, {}
+        return _clip(text), True, {}
+
+
+GUIDE_FILE = Path(__file__).with_name("guide.md")
+
+
+def guide_section(topic):
+    try:
+        text = GUIDE_FILE.read_text()
+    except OSError:
+        return "The guide is missing."
+    parts = re.split(r"^## ", text, flags=re.M)
+    for p in parts[1:]:
+        head, _, body = p.partition("\n")
+        if head.strip().lower().startswith(str(topic).lower()):
+            return _clip("## " + head + "\n" + body.strip())
+    return "Topics: " + ", ".join(p.partition("\n")[0].strip() for p in parts[1:])
+
+
+def _metrics_brief(m):
+    if not m:
+        return "no measurements"
+    keys = [("forward_mm", "forward {:+.1f} mm"), ("side_mm", "left {:+.1f} mm"), ("turn_deg", "turned {:+.0f} deg"),
+            ("height_mm", "height {:.1f} mm"), ("airtime_s", "in the air {:.2f} s"), ("fell", "fell {:.0%} of runs"),
+            ("wing_power", "wing power {:.2f}"), ("jump", "jump muscle {:.2f}"), ("unwanted", "unplanned muscles {:.2f}"),
+            ("tracking", "muscles followed the plan {:.2f}")]
+    return ", ".join(f.format(m[k]) for k, f in keys if k in m and m[k] is not None)
+
+
+def _learn_text(head, r):
+    rep = r.get("report") or {}
+    drv = "; ".join(f"{d['channel']} via {d['level_text']}: {', '.join(d['types'][:3])}" for d in r["drivers"][:14])
+    if len(r["drivers"]) > 14:
+        drv += f"; ... ({len(r['drivers'])} channels)"
+    tl = "; ".join(f"{k}: " + ", ".join(f"t={t} plan {p:+.2f} got {g:+.2f}" for t, p, g in pts)
+                   for k, pts in list((r.get("timeline") or {}).items())[:8])
+    lim = (" Clipped by the skeleton: " + "; ".join(r["limits"]) + ".") if r.get("limits") else ""
+    n = r.get("copies")
+    where = (f"practised in {n} background {'copy' if n == 1 else 'copies'} of the fly" if r.get("where") == "practice"
+             else "practised on the live fly")
+    out = [f"{head} in {r['seconds']} s ({where}).{lim}"]
+    if r.get("note"):
+        out.append(r["note"] + ".")
+    out.append(f"Shaping (muscles following the plan, 1 = exactly): tries {r['attempts']}, per control {r['per_control']}.")
+    if rep.get("goal"):
+        st = rep.get("start") or {}
+        out.append(f"Practice for the goal ({rep['goal']}): {rep['trials']} tries; best of each round {rep['by_round']}. "
+                   f"Result (mean of 3 runs): score {rep['score']} [{', '.join(f'{k} {v:+.2f}' for k, v in rep['parts'].items())}]; "
+                   f"{_metrics_brief(r['metrics'])}. "
+                   + (f"Before practice (the shaped plan): score {st.get('score')}, {_metrics_brief(st.get('metrics'))}. " if st else "")
+                   + ("The skill as it was stayed best. " if rep.get("kept_old") else f"What practice changed: {rep['change']}. "))
+        b = rep.get("baseline")
+        if b and not b.get("error"):
+            out.append(f"Baseline {b['text']}: score {b['score']}, {_metrics_brief(b['metrics'])}.")
+        elif b:
+            out.append(f"Baseline: {b['error']}.")
+    else:
+        out.append(f"Result: {_metrics_brief(r.get('metrics'))}.")
+    on = [k for k, v in (r.get("assists") or {}).items() if v]
+    out.append(f"Hand-built parts in practice: {', '.join(on) if on else 'none (neurons and muscles only)'}.")
+    out.append(f"Neurons driven: {drv}.")
+    if tl:
+        out.append(f"Planned vs achieved (shaping): {tl}.")
+    if r.get("shown"):
+        out.append(f"Shown on the live fly: {r['shown']}.")
+    out.append("Saved: do_skills replays it; test_skill measures it; refine_skill practises more or for a new goal.")
+    return " ".join(out)

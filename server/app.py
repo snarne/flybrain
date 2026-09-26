@@ -104,6 +104,7 @@ class World:
         self.blocked = set()
         self.ablated = {}             # name -> neuron indices silenced for a whole experiment (ablate())
         self.variant = "real"
+        self.variant_seed = 0
         self.wiring = (self.indptr, self.indices, self.weights["stable"])   # what the simulator runs
         self.paused = False
         self.speed = 1.0
@@ -244,6 +245,7 @@ class World:
         elif name != "real":
             raise ValueError(f"unknown variant {name}")
         self.variant = name
+        self.variant_seed = int(seed)
         self.wiring = (ip, ix, w)
         self.brain.set_connectome(ip, ix, w)
         self.brain.mode = "stable"
@@ -537,6 +539,8 @@ def _do_body_command(c):
         world.mb.forget()
     elif a == "learning":                    # {"cmd":"body","action":"learning","on":false} freezes the synapses
         world.mb.learning = bool(c.get("on", True))
+    elif a == "assist":                      # {"cmd":"body","action":"assist","name":"flight_timer","on":false}
+        body.set_assist(c.get("name", ""), bool(c.get("on", True)))
     elif a == "reset":                       # {"cmd":"body","action":"reset","home":true} also re-centres the fly
         skills.stop()
         body.reset(home=bool(c.get("home", False)))
@@ -588,6 +592,25 @@ def setup_agent():
         runtime.ensure_started()  # None = whatever llm_config.json says (model_path, model, or recommended)
     else:
         runtime.prepare()
+
+
+def install_flylab():
+    """Put the Python helper for scripts (flylab.py) in the agent's workspace. A newer release replaces an
+    older one (kept as flylab_old.py); a copy the agent edited itself is left alone."""
+    src = Path(__file__).parent / "agent" / "flylab.py"
+    dst = ROOT / "workspace" / "flylab.py"
+    ver = lambda t: t.split("FLYLAB_VERSION = ", 1)[1].split("\n", 1)[0] if "FLYLAB_VERSION = " in t else ""
+    try:
+        dst.parent.mkdir(exist_ok=True)
+        new = src.read_text()
+        if dst.exists():
+            old = dst.read_text()
+            if old == new or ver(old) == ver(new):
+                return
+            (dst.parent / "flylab_old.py").write_text(old)
+        dst.write_text(new)
+    except Exception as e:
+        log_error(f"couldn't install flylab.py: {e}")
 
 
 def agent_status():
@@ -673,12 +696,14 @@ async def lifespan(_app):
     outbox = asyncio.Queue()
     world.brain.step(1)  # compile the numba kernel before the first client
     setup_agent()
+    install_flylab()
     tasks = [asyncio.create_task(t) for t in (run_loop(), pump_outbox(), watch_runtime(), explain_events())]
     loop_ = asyncio.get_running_loop()
     loop_.run_in_executor(None, world.build_csc)  # ready before the first decision
     yield
     for t in tasks:
         t.cancel()
+    skills.pool.stop()
     runtime.stop()
 
 
@@ -779,6 +804,95 @@ def get_pathways():
 @app.get("/api/skills")
 def get_skills():
     return {"skills": skills.list(), "controls": skills.controls_help()}
+
+
+@app.get("/api/skill/{name}")
+def get_skill(name: str):
+    sk = skills.get(name)
+    return sk or JSONResponse({"error": f"no skill called {name}"}, status_code=404)
+
+
+@app.get("/api/controls")
+def get_controls():
+    """Every motor control: the muscles that push it + and -, and the planning reference text."""
+    m = world.motor
+    mus = lambda pools: sorted({m.pools[i]["key"] for i in pools})
+    return {"controls": {k: {"plus": mus(pos), "minus": mus(neg)} for k, (pos, neg) in m.controls.items()},
+            "reference": skills.reference()}
+
+
+@app.get("/api/body")
+def get_body():
+    """What the body is doing now: behaviour, where it is, how it moves, its senses, the hand-built parts."""
+    st = body.state(skill_brief())
+    return {k: st[k] for k in ("mode", "skill", "airborne", "flight_power", "ball", "rates", "senses", "fly", "physics",
+                               "active", "memory")} | {"arena": body.arena.view(), "t_ms": world.brain.t_ms}
+
+
+@app.get("/api/rates")
+def get_rates(types: str = "", neurons: str = ""):
+    """Firing rates now (Hz, ~250 ms window): per cell type (mean, max, n), or per neuron index."""
+    out = {}
+    for t in filter(None, (x.strip() for x in types.split(","))):
+        label, idx = atlas().resolve(t)
+        if label is not None:
+            r = world.rate[idx]
+            out[label] = {"mean": round(float(r.mean()), 2), "max": round(float(r.max()), 2), "n": int(len(idx))}
+        else:
+            out[t] = None
+    for n in filter(None, (x.strip() for x in neurons.split(","))):
+        if n.isdigit() and int(n) < world.N:
+            out[n] = round(float(world.rate[int(n)]), 2)
+    return out
+
+
+@app.get("/api/find")
+def find_types(q: str):
+    return atlas().find(q)
+
+
+@app.get("/api/practice")
+def get_practice():
+    from body import ASSISTS
+    import practice
+    return {"copies": skills.pool.n, "running": len(skills.pool.workers), "ready": skills.pool.ready,
+            "error": skills.pool.error, "assists": ASSISTS, "metrics": {k: v[1] for k, v in practice.METRICS.items()},
+            "goal_presets": practice.GOAL_PRESETS}
+
+
+@app.post("/api/skills/learn")
+async def post_learn(c: dict):
+    """{"name", "description", "keyframes" | "gait", "duration", "goal", "trials", "baseline", "assists", "drive_at",
+    "show", "refine"}"""
+    old = skills.lib.get(c.get("name", "")) if c.get("refine") else None
+    if c.get("refine") and not old:
+        return JSONResponse({"ok": False, "error": "refine: no such learned skill"}, status_code=404)
+    plan = {"duration": c.get("duration"), "keyframes": c["keyframes"]} if c.get("keyframes") else \
+        skills.gait_plan(**c["gait"]) if c.get("gait") else (old or {}).get("plan")
+    if plan is None:
+        return JSONResponse({"ok": False, "error": "keyframes needed"}, status_code=400)
+    r = await skills.learn(c["name"], c.get("description", (old or {}).get("description", "")), plan,
+                           goal=c.get("goal", (old or {}).get("goal")), trials=c.get("trials"), assists=c.get("assists"),
+                           baseline=c.get("baseline"), show=bool(c.get("show", True)), warm=old,
+                           keep_rates=bool(old) and not c.get("keyframes") and not c.get("gait"),
+                           drive_at=c.get("drive_at"))
+    emit({"type": "skills", "skills": skills.list()})
+    return r
+
+
+@app.post("/api/skills/test")
+async def post_test(c: dict):
+    """{"name", "assists", "goal", "runs", "duration"}: measured in the practice copies."""
+    try:
+        return await skills.test(c["name"], assists=c.get("assists"), goal=c.get("goal"), runs=c.get("runs", 3),
+                                 duration=c.get("duration"))
+    except (ValueError, RuntimeError) as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/skills/do")
+async def post_do(c: dict):
+    return await skills.perform(list(c.get("names", [])), c.get("repeat", 1))
 
 
 @app.get("/api/agent/bridge")

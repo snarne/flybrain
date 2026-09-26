@@ -676,11 +676,18 @@ function setBodyOpts(ph) {
   bodyBtns.feedback.classList.toggle('on', !!ph.on && ph.feedback > 0);
   bodyBtns.feedback.disabled = !ph.on;
   const mode = ph.rhythm || (ph.rhythms ? 'neurons' : 'off');
-  bodyBtns.rhythm.textContent = `Walking: ${mode === 'off' ? 'off' : 'on'}`;
+  bodyBtns.rhythm.textContent = `Walking model: ${mode === 'off' ? 'off' : 'on'}`;
   bodyBtns.rhythm.classList.toggle('on', mode !== 'off');
+  if (bodyBtns.flight_timer) {
+    const ft = (ph.assists || {}).flight_timer !== false;
+    bodyBtns.flight_timer.textContent = `Flight timer: ${ft ? 'on' : 'off'}`;
+    bodyBtns.flight_timer.classList.toggle('on', ft);
+  }
 }
 bodyBtns.physics.onclick = () => send({ cmd: 'body', action: 'physics', on: !bodyOpts.on });
 bodyBtns.feedback.onclick = () => send({ cmd: 'body', action: 'feedback', gain: bodyOpts.feedback > 0 ? 0 : 1 });
+if (bodyBtns.flight_timer) bodyBtns.flight_timer.onclick = () =>
+  send({ cmd: 'body', action: 'assist', name: 'flight_timer', on: (bodyOpts.assists || {}).flight_timer === false });
 bodyBtns.rhythm.onclick = () => {
   const order = ['neurons', 'off'];
   const next = order[(order.indexOf(bodyOpts.rhythm || 'neurons') + 1) % order.length];
@@ -716,7 +723,10 @@ function renderSkills(list) {
   for (const s of list) {
     const d = document.createElement('div');
     d.className = 'skill-item';
-    d.innerHTML = `<div class="grow"><div class="t">${esc(s.name.replace(/_/g, ' '))}${s.builtin ? ' <span class="tag">built in</span>' : ''}</div><div class="m">${esc(s.description)} ${s.command ? ' · via command neurons' : ` · score ${(s.score ?? 0).toFixed(2)} · via ${esc(s.levels.join(', '))}`}${s.uses ? ` · used ${s.uses}×` : ''}</div></div>
+    const got = s.metrics ? metricsBrief(s.metrics) : '';
+    const what = s.command ? ' · via command neurons + walking model'
+      : s.goal ? ` · goal: ${esc(s.goal)} · ${esc(got)}` : ` · followed the plan ${(s.score ?? 0).toFixed(2)}${got ? ' · ' + esc(got) : ''}`;
+    d.innerHTML = `<div class="grow"><div class="t">${esc(s.name.replace(/_/g, ' '))}${s.builtin ? ' <span class="tag">built in</span>' : ''}</div><div class="m">${esc(s.description)}${what}${s.command ? '' : ` · via ${esc(s.levels.join(', '))}`}${s.uses ? ` · used ${s.uses}×` : ''}</div></div>
       <button class="btn" title="Do it">▶</button>${s.builtin ? '' : '<button class="link" title="Forget this skill">×</button>'}`;
     const [play, forget] = d.querySelectorAll('button');
     play.onclick = () => send({ cmd: 'skill', action: 'play', name: s.name });
@@ -724,7 +734,18 @@ function renderSkills(list) {
     skillList.append(d);
   }
 }
+function metricsBrief(m) {
+  const parts = [];
+  if (Math.abs(m.forward_mm) >= 0.3) parts.push(`${m.forward_mm > 0 ? '+' : ''}${m.forward_mm.toFixed(1)} mm forward`);
+  if (Math.abs(m.turn_deg) >= 10) parts.push(`turned ${m.turn_deg > 0 ? 'left' : 'right'} ${Math.abs(m.turn_deg).toFixed(0)}°`);
+  if (m.height_mm >= 1) parts.push(`${m.height_mm.toFixed(1)} mm high`);
+  if (m.airtime_s >= 0.05) parts.push(`${m.airtime_s.toFixed(2)} s in the air`);
+  if (m.fell > 0) parts.push('fell');
+  return parts.join(', ') || 'stayed put';
+}
 fetch('api/skills').then(r => r.json()).then(r => renderSkills(r.skills));
+const STAGE_TEXT = { start: 'starting the practice copies of the fly', shape: 'shaping: making the muscles follow the plan',
+  search: 'practising for the goal', check: 'checking the best tries again' };
 const LEVEL_SHORT = { descending: 'descending', premotor: 'premotor', motor: 'motor neuron' };
 function onSkill(m) {
   if (m.type === 'skills') return renderSkills(m.skills);
@@ -739,12 +760,22 @@ function onSkill(m) {
       const rows = m.drivers.map(d => `<div class="drv"><span class="lvl ${d.level}">${LEVEL_SHORT[d.level]}</span> <b>${esc(d.channel)}</b> ← ${esc(d.types.slice(0, 3).join(', '))}${d.gain !== 1 ? ` <span class="m">×${d.gain}</span>` : ''}</div>`).join('');
       skillLive.innerHTML = `<div class="t"><span class="spinner"></span> Practising “${esc(m.name.replace(/_/g, ' '))}”, try ${m.attempt}</div>${rows}<div class="scores" id="skill-scores">${skillLive.dataset.scores || ''}</div>`;
     }
+  } else if (m.event === 'practice') {
+    skillLive.hidden = false;
+    const n = m.n || 0, of = m.of || 0;
+    const pct = of ? Math.round(100 * n / of) : 0;
+    const start = m.stage === 'start' && m.starting ? ' (about 15 s the first time)' : '';
+    skillLive.innerHTML = `<div class="t"><span class="spinner"></span> Learning “${esc(m.name.replace(/_/g, ' '))}”: ${STAGE_TEXT[m.stage] || m.stage}${start}${of ? ` · ${n}/${of}` : ''}</div>`
+      + (of ? `<div class="bar"><i style="width:${pct}%"></i></div>` : '')
+      + (m.best != null ? `<div class="m">best so far ${m.best.toFixed(2)}${m.stage === 'shape' ? ' (1 = the muscles did exactly what was planned)' : ' (goal score)'}</div>` : '')
+      + '<div class="m">in background copies of the fly: the live fly keeps running</div>';
   } else if (m.event === 'attempt') {
     skillLive.dataset.scores = (skillLive.dataset.scores || '') + `<span>try ${m.attempt}: ${m.score.toFixed(2)}</span>`;
     const sc = document.getElementById('skill-scores');
     if (sc) sc.innerHTML = skillLive.dataset.scores;
   } else if (m.event === 'learned') {
-    skillLive.innerHTML = `<div class="t">Learned “${esc(m.name.replace(/_/g, ' '))}” in ${m.seconds} s · best score ${m.score.toFixed(2)}</div><div class="scores">${skillLive.dataset.scores || ''}</div>`;
+    skillLive.innerHTML = `<div class="t">Learned “${esc(m.name.replace(/_/g, ' '))}” in ${m.seconds} s · ${m.goal ? `goal score ${m.score.toFixed(2)}` : `followed the plan ${m.score.toFixed(2)}`}</div>`
+      + (m.metrics ? `<div class="m">${esc(metricsBrief(m.metrics))}</div>` : '') + `<div class="scores">${skillLive.dataset.scores || ''}</div>`;
     skillLive.dataset.scores = '';
     fetch('api/skills').then(r => r.json()).then(r => renderSkills(r.skills));
     setTimeout(() => { skillLive.hidden = true; }, 15000);

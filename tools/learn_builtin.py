@@ -8,7 +8,8 @@ server/data/skills_builtin.json (shipped with the app, so nobody has to wait for
 
 The walking and turning built-ins aren't learned: they activate the command neurons (P9, MDN, DNa02)
 and the legs step as the brain commands (server/locomotion.py). Learning runs on the default body
-(physical, with the legs' sense organs feeding back, as the app uses it) and takes a few minutes.
+(physical, with the legs' sense organs feeding back, as the app uses it), in a practice copy of the fly
+(server/practice.py), and takes a minute or two.
 """
 import asyncio
 import json
@@ -23,7 +24,6 @@ sys.path.insert(0, str(ROOT / "tools"))
 os.environ.setdefault("NO_BROWSER", "1")
 
 
-ATTEMPTS = 12
 DT = 1.0 / 30
 
 
@@ -54,7 +54,7 @@ async def main(names):
         desc, plan = builtin[name]["description"], builtin[name]["plan"]
         t = time.time()
         sk.lib.pop(name, None)
-        res = await sk.learn(name, desc, plan, attempts=ATTEMPTS)
+        res = await sk.learn(name, desc, plan, show=False)   # shaped in a practice copy (live, if none can start)
         if not res.get("ok"):
             print(name, "failed:", res.get("error"), flush=True)
             continue

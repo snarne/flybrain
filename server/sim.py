@@ -165,6 +165,11 @@ def _run(n_steps, u, g, ad, last, refr, refr_steps, indptr, indices, weights,
     n_act_arr[0] = n_act
 
 
+@njit(cache=True)
+def _seed(s):
+    np.random.seed(s)
+
+
 class Brain:
     """Holds network state; call step(ms) to advance."""
 
@@ -297,6 +302,11 @@ class Brain:
              self.bd, self.burst_scale, self.p["d_burst"], self.Eb, self.Kb, self.syn_idx, self.syn_p, self.syn_w)
         self.step_i += n
         return self.out_idx[: self.out_n[0]]
+
+    def seed(self, s):
+        """Fix the random input spikes from here on (the same seed gives the same run: practice trials
+        compare candidates on the same noise)."""
+        _seed(int(s) % (2 ** 31))
 
     @property
     def t_ms(self):

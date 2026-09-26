@@ -378,3 +378,5 @@ body.mode-agent [data-for="lab"], body.mode-lab [data-for="agent"] { display: no
 .place-hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 5; background: #1a1f2acc;
   border: 1px solid #ffc85766; color: var(--accent); padding: 5px 12px; border-radius: 99px; font-size: 12px; pointer-events: none; white-space: nowrap; }
 .place-hint[hidden] { display: none; }
+.skill-live .bar { margin: 4px 0; }
+.skill-live .m { color: var(--muted); font-size: 11px; line-height: 1.5; }

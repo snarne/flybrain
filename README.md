@@ -30,9 +30,11 @@ that can teach it new movements.
   neurons silenced, to show what the real wiring contributes.
 - **Fly, the agent**: an open language model running on your own computer (talking, reasoning,
   designing systems, writing and running code), with Laya as a fast "System 1" in front of it. The
-  fly is its body. Ask it to do a movement the fly has never done, like tapping a key, and it plans
-  the movement, the engine searches the wiring for the neurons that produce it, and the fly
-  practises while you watch. The result is saved as a **skill**: the next time, it's instant. It
+  fly is its body. Ask it to do a movement the fly has never done, like tapping a key or jumping as
+  high as it can, and it plans the movement and says what it should achieve; the engine searches the
+  wiring for the neurons that produce it, and the fly practises many variations in background copies
+  of itself, scored on what each try achieved. The result is saved as a **skill**: the next time,
+  it's instant. It
   can also work as a **neuroscientist** on its own nervous system: look up cell types, trace
   pathways, activate, record and silence neurons, and score the results against real experiments.
 
@@ -93,6 +95,10 @@ too: open **Use another model** in the same place (details under "Any model" bel
   than reloaded). What went wrong is written to `data/logs/server.log`, including hard crashes.
 - **The top bar shows less than 1× real time.** Big inputs (odours, whole-eye vision) are heavy for
   one CPU core; lower the speed in the Senses tab or switch the input off.
+- **Learning a skill takes a while, or the computer gets busy.** Skills practise in background copies
+  of the fly: each takes a CPU core and about 1 GB of memory, and the first one takes ~15 s to start.
+  The app picks how many from your cores and memory (1 to 4); set `FLYBRAIN_PRACTICE_WORKERS=2` (for
+  example) to choose. Fewer tries (`trials`) are faster; more find better movements.
 - **Start from scratch.** Delete the hidden `.cache`, `.tools` and `.venv-*` folders (and
   `server/data/connectome_banc888.npz`). Your conversations and learned skills are in `data/`.
 
@@ -158,8 +164,10 @@ Every frame (30 a second, in simulated time):
    muscles: their difference sets the angle the joint is pulled towards, their sum how stiffly it's
    held (both relaxed = a floppy joint that only holds some tone, both contracted = a stiff one, as
    in insects). Trochanter flexors lift the femur and extensors press it down, the tibia flexors fold
-   the leg and the extensor reaches, the thorax-coxa muscles swing it, and the claw muscles (tarsus
-   depressor, long tendon) engage the sticky foot pads, which lets a leg pull as well as push. The
+   the leg and the extensor reaches, the thorax-coxa muscles swing it (the coxa's roll moves with the
+   swing, as in a walking fly: it has no muscles of its own in the annotation), the adductor pulls it
+   in, the femur reductor twists the femur, and the claw muscles (tarsus depressor, long tendon)
+   engage the sticky foot pads, which lets a leg pull as well as push. The
    brain and the body run side by side: the body plays out one frame's muscle commands while the
    brain computes the next (a 33 ms sensorimotor delay, about a fly's).
 5. **The body → sense organs → nerve cord** (`server/feedback.py`). Each leg's proprioceptors,
@@ -197,8 +205,8 @@ itself (a 200 Hz oscillation of the flight muscles, shown slowed down).
 **Body buttons** (under the fly): *Physics* switches between the physical body and a kinematic one
 (joint angles straight from the muscles, movement estimated from leg sweeps; also used when MuJoCo
 isn't installed, or with `FLYBRAIN_BODY=kinematic`). *Leg feedback* connects or disconnects the
-legs' sense organs. *Walking* switches the stepping (below) on or off (off: only what the connectome
-does by itself). *Re-centre* puts the fly back in the middle.
+legs' sense organs. *Walking model* and *Flight timer* switch the two hand-built parts (below) on or
+off. *Re-centre* puts the fly back in the middle.
 
 What the wiring produces, checked live and with `tools/validate.py`:
 
@@ -215,21 +223,24 @@ What the wiring produces, checked live and with `tools/validate.py`:
 | Odours, humidity | the brain responds (antennal lobe, lateral horn, mushroom body); the walking command neurons hardly do, so the fly doesn't move towards or away | |
 | Antenna dust | leg twitches only; the touch → grooming pathway is too weak in this wiring to reach the aDN command neurons | |
 
-Three things to know:
+Three things to know, two of them **hand-built parts** of the body. Each can be switched off, and
+skills practise with them off (see Skills), so it's always clear what comes from the connectome:
 
 - **Gap junctions.** The giant fibre drives the jump motor neuron mainly through electrical synapses,
   which an electron-microscopy connectome cannot see. Those few known ones (giant fibre → TTMn and
   PSI) are added by hand, and marked as such.
-- **Flight follows the tarsal reflex.** In real flies, contact under the feet inhibits flight and
-  losing it starts and keeps up flight. So the flight motor runs once no foot has touched the ground
-  for 0.1 s while the flight power motor neurons fire, or straight after an escape jump (the giant
-  fibre drives the flight muscles as well as the jump muscle). Once airborne the fly keeps flying at a
-  cruising power for 1.5 s, then eases off, sinks and lands; touching down on three or more feet ends
-  the flight. (The brain's flight power neurons fire only for a fraction of a second after a looming
-  shadow, so without this the fly fell back after half a second of flight, often on its back.)
-- **Walking** (`server/locomotion.py`). The nerve-cord circuits that generate stepping in a fly
+- **Flight follows the tarsal reflex; the flight timer is hand-built.** In real flies, contact under
+  the feet inhibits flight and losing it starts and keeps up flight. So the flight motor runs only once
+  no foot touches the ground while the flight power motor neurons fire, and touching down on three or
+  more feet ends the flight. The **flight timer** (switchable) adds: an escape jump starts flight
+  straight away (the giant fibre drives the flight muscles as well as the jump muscle), and once
+  airborne the fly keeps flying at a cruising power for 1.5 s, then eases off, sinks and lands. (The
+  brain's flight power neurons fire only for a fraction of a second after a looming shadow, so without
+  the timer the fly falls back after half a second of flight.) With it off, flight power is only what
+  the wing power motor neurons give, so a skill can fly, or jump without flying, on its own.
+- **Walking: the walking model is hand-built** (`server/locomotion.py`). The nerve-cord circuits that generate stepping in a fly
   (central pattern generators) aren't mapped yet, and a leaky integrate-and-fire model doesn't make
-  rhythms by itself (with *Walking: off* the command neurons only give twitches). What is known is how
+  rhythms by itself (with the walking model off the command neurons only give twitches). What is known is how
   the brain commands walking, so that part is the simulated brain's, and the stepping itself is
   modelled the way NeuroMechFly does it:
   - six leg oscillators in a tripod (front and hind legs of one side with the middle leg of the
@@ -325,7 +336,8 @@ network passes every control.
 
 ```bash
 uv run tools/benchmark.py                          # physical body, walking on (~15 min)
-uv run tools/benchmark.py --rhythm off             # connectome only: no stepping model
+uv run tools/benchmark.py --rhythm off             # no walking model: the connectome alone moves the legs
+uv run tools/benchmark.py --flight-timer off       # no flight timer: flight power only from the motor neurons
 uv run tools/benchmark.py --variant shuffled       # control wiring (below)
 uv run tools/benchmark.py --ablate giant_fibre     # silence neurons: vision, mushroom_body, descending,
                                                    # giant_fibre, antennal_lobe, lateral_horn, or a cell type
@@ -394,45 +406,76 @@ What this says:
 
 ## Skills: teaching the fly new movements
 
-Ask Fly in chat to do something its body has never done ("tap your front-left leg", "wave", "type
-hi"). It works like this (`server/skills.py`):
+Ask Fly in chat to do something its body has never done ("tap your front-left leg", "jump as high as
+you can", "walk forwards without the walking model"). The idea: the LLM plans and judges, the
+connectome and the body do the moving, and practice finds how far they can go. It works like this
+(`server/skills.py`, `server/practice.py`):
 
-1. **Plan.** The LLM describes the movement as keyframes of motor controls: per leg `swing`, `lift`,
-   `reach`, `grip`, `spread`; wings `power`, `extend`, `stroke`; head `yaw`/`pitch`/`roll`;
-   proboscis; antennae. Values from -1 to 1 over time. It can first call `motor_reference` for the
-   joint ranges and timing facts, and values outside what the skeleton allows are clipped.
-2. **Search the wiring (the slow part, done once).** Each control direction maps to muscle pools
-   (e.g. "front-left lift up" = the front-left trochanter flexor motor neurons). For every neuron, the
-   engine computes its influence on every pool through up to three synapses (signed, normalised by
-   each target's total input). Good drivers push their target hard and its antagonist and everything
-   else weakly. It tries **descending neurons** first (brain → nerve cord), then **premotor
-   nerve-cord interneurons**, and only as a last resort the motor neurons themselves.
-3. **Practise, visibly.** The chosen neurons are driven on the live connectome, and the engine
-   measures what the muscles actually did. It corrects the drive over the whole movement from the
-   error (iterative learning control): harder where a muscle lagged, gentler where it overshot. A
-   driver that can't move its muscle even at full drive is replaced one level down; one that makes
-   other body parts move is swapped for a more specific one. If a movement is still only roughly
-   right after three tries, that muscle's own motor neurons are added as a fine trim for the
-   remaining error, while the upstream drivers keep doing the bulk of it. Up to eight tries, each starting from a
-   quiet nervous system; you see the tries, the drivers and the scores in the Skills panel, and the
-   driven neurons light up.
-4. **Save.** The best version is stored in `data/skills/skills.json` (this computer only, not in
-   git): the driver neurons (with their BANC ids), their firing schedule, the plan and the score.
+1. **Plan and goal.** The LLM describes the movement as keyframes of motor controls: per leg `swing`,
+   `lift`, `reach`, `grip`, `spread`, `twist`, and the middle legs' `jump` muscle; wings `power`,
+   `extend`, `stroke`; head; proboscis; antennae; halteres; abdomen. Values from -1 to 1 over time
+   (`motor_reference` has the joint ranges, timing facts and physics). For walking it can instead ask
+   for a plan made from a real fly's recorded steps (`gait`). And it says what the movement should
+   achieve: a **goal**, like `forward`, `turn_left`, `jump_high`, `still`, or its own weighting of the
+   measured metrics (how far forward, sideways, how much it turned, how high, time in the air, whether
+   it fell, flight power, the jump muscle, muscles the plan doesn't use).
+2. **Search the wiring (done once).** Each control direction maps to muscle pools (e.g. "front-left
+   lift up" = the front-left trochanter flexor motor neurons). For every neuron, the engine computes its
+   influence on every pool through up to three synapses (signed, normalised by each target's total
+   input). Good drivers push their target hard and its antagonist and everything else weakly. It tries
+   **descending neurons** first (brain → nerve cord), then **premotor nerve-cord interneurons**, and
+   only as a last resort the motor neurons themselves (`drive_at` can restrict this to the nerve cord
+   or the motor neurons).
+3. **Shape.** The drivers are driven and the engine measures what the muscles did, correcting the
+   drive from the error (iterative learning control) until the muscles follow the plan; a driver that
+   can't move its muscle is replaced one level down, one that moves other body parts is swapped.
+4. **Practise for the goal.** Many tries (40 by default) in **background copies of the whole fly**
+   (brain, muscles, body, physics; `server/practice_worker.py`, a few at once on a computer with the
+   cores for it), while the live fly keeps running. Every try starts from the same standing fly; a
+   numerical search (CMA-ES) varies how hard and when each kind of movement's neurons are driven, and
+   the pace, and scores each try on the goal. The best few are tried again on fresh noise and the best
+   on average wins. Falling over, muscles the plan doesn't use, the wings (if the plan doesn't use
+   them) and the jump (if it doesn't use it) count against a try unless the goal says otherwise.
+5. **Compare and save.** A built-in skill can be measured the same way as a **baseline** (e.g.
+   `walk_forward`, with the walking model it relies on). The skill is stored in
+   `data/skills/skills.json` (this computer only, not in git): the driver neurons (with their BANC ids),
+   their firing schedule, the plan, the goal, what it achieved and the switches it was learned with; then
+   it's shown once on the live fly.
+
+**Hand-built parts are off in practice.** The walking model and the flight timer (see The fly's body)
+are switched off while a skill practises, unless the LLM asks for them, and a skill replays with the
+switches it learned with. So a learned skill is the neurons' and muscles' own work, and the built-in
+versions become the baselines to beat. `test_skill` measures any skill with or without them, without
+touching the live fly.
 
 After that, `do_skills` just replays the stored drive: no search, no practice. To type a word, Fly
-learns one small tap skill per leg once, then chains them. The built-in skills are listed too, and Fly
-can use them like its own: walking forwards and backwards and turning left and right activate those
-command neurons (P9, MDN, DNa02 left or right) for a second and the legs step as the brain commands;
-grooming its antennae is a learned movement.
+learns one small tap skill per leg once, then chains them. The built-in skills are listed too:
+walking forwards and backwards and turning left and right activate those command neurons (P9, MDN,
+DNa02 left or right) and the walking model steps the legs; grooming its antennae is a recorded
+movement.
+
+What it gets (about a second of movement, 40 tries, measured in the practice copies; forward
+distance, mean of 3 runs):
+
+| Movement | Before practice | After practice | Built-in `walk_forward` (walking model), same time |
+|---|---|---|---|
+| a real fly's recorded steps as a plan, driven at the motor neurons | 4.4 mm | 5.5 mm | 4.9 mm |
+| a simple tripod plan (lift and swing only), brain's own routes | 9.8 mm, but by hopping (it set off the jump muscle) | 4.2 mm, walking | 4.6 mm |
+| the recorded steps, brain's own routes (descending, premotor) | 0.3 mm, the wings working too | 2.2 mm | 6.7 mm |
+| built-in `walk_forward` with the walking model off | 0 mm: the command neurons alone don't step the legs | | |
+| a jump (the middle legs' jump muscle, through the giant fibre) | 13.5 mm high | 16.4 mm high, lands on its feet, doesn't fly off | |
+
+So the body can walk from its muscles as well as the walking model does, and practice improves on
+the plan it's given; what limits walking through the brain's own routes is how specific the upstream
+neurons are (a premotor neuron that lifts a leg may also work the wings). Practice also catches
+cheats: the simple plan first "walked" by hopping, and the goal's penalty on the jump muscle pushed it
+back to walking.
 
 This is the same idea as the KV cache, one level down: work that is expensive the first time is
 kept and reused. And the skill list is deliberately not in the LLM's system prompt. Every new skill
 would change the prompt's start and throw away the cached tokens, so Fly looks skills up with a tool
 (`list_skills`) and the answer lands at the end of the conversation, where it costs only its own
 tokens.
-
-A score of 1.0 means the muscles followed the plan exactly; 0.6-0.8 is typical, since the network
-answers the same drive a little differently each time, as neurons do.
 
 ## Fly, the agent
 
@@ -493,12 +536,12 @@ Native tool calling is more reliable, so prefer models that have it. Set `"tool_
 force the prompt style, `"native"` to never fall back.
 
 **Better models plan better movements.** When asked for a new movement, Fly reads `motor_reference`
-(every motor control, each leg joint's range in degrees, real fly timing, and the built-in walking
-and grooming timelines as worked examples), writes a keyframe timeline, and learns it. The result
-comes back as a planned-vs-achieved timeline for each control, and Fly can `refine_skill` to fix
-what lagged or overshot, keeping the neurons already found. A stronger model writes more realistic
-timelines and makes better use of that feedback, so its skills come out more accurate; the
-simulated nervous system and the practice loop are the same for every model.
+(every motor control, each leg joint's range in degrees, real fly timing, the physics, the hand-built
+parts, and the goal metrics), writes a keyframe timeline and a goal, and learns it. The result comes
+back as what the movement achieved (before and after practice, and against a baseline), and Fly can
+`refine_skill` with a new goal, more tries or a changed plan. A stronger model writes better plans and
+goals and reads the results better; the simulated nervous system and the practice are the same for
+every model.
 
 Or set it in a file. Create `llm_config.json` next to this README (it is git-ignored). Top-level keys
 apply on every machine; a section named after a profile applies only there:
@@ -543,7 +586,14 @@ The **LLM** (Qwen) then answers, streaming its thinking (collapsible) and its re
 read/write/edit files and run commands in the `workspace/` folder (commands ask for your approval
 unless you tick Auto-approve), long-term notes (remember/recall), its body
 (body_experiment, stimulate_senses, brain_status, list_skills, motor_reference, learn_skill,
-refine_skill, do_skills), and neuroscience tools (below).
+refine_skill, test_skill, do_skills, body_parts), and neuroscience tools (below).
+
+It also has a way to learn the system itself, so it doesn't guess: `guide` (a guide to what's real
+connectome and what's hand-built, how the body and practice work, and what each tool is for;
+`server/agent/guide.md`), `api_get` (reads the app's local HTTP API, no approval needed), and
+`flylab.py`, a small Python helper the app puts in the workspace for scripts (`import flylab as fl;
+fl.info("DNp01")`, `fl.rates([...])`, `fl.test("walk_forward", assists={"walking": False})`, ...;
+plain Python over the local API).
 
 ### Fly as a neuroscientist
 
@@ -652,7 +702,8 @@ POST http://localhost:8765/api/command
                                                      # stop, reset ("home": true re-centres the fly)
 {"cmd": "body",   "action": "physics", "on": true}     # physical or kinematic body
 {"cmd": "body",   "action": "feedback", "gain": 1}     # legs' sense organs -> nerve cord (0 = off)
-{"cmd": "body",   "action": "rhythm", "mode": "neurons"} # walking: neurons (on) | off
+{"cmd": "body",   "action": "rhythm", "mode": "neurons"} # the walking model: neurons (on) | off
+{"cmd": "body",   "action": "assist", "name": "flight_timer", "on": false}  # a hand-built part on/off
 {"cmd": "ablate", "group": "vision", "on": true}       # silence a neuron group or a cell type (false: restore)
 {"cmd": "body",   "action": "fruit"}                   # put something in the world near the fly: sugar,
                                                      # bitter, fruit, co2, geosmin, cva, heat, cold,
@@ -674,6 +725,16 @@ GET /api/activity_groups the neuron groups of the activity view
 GET /api/presets        all senses and behaviour readouts with their neuron ids
 GET /api/body/pathways  motor neurons per body part, descending command neurons
 GET /api/skills         learned skills, and the motor controls a plan can use
+GET /api/skill/{name}   one skill: plan, goal, what it achieved, drivers and their firing schedule
+GET /api/controls       every motor control and its muscles, plus the planning reference
+GET /api/body           what the body is doing, where it is, the hand-built parts
+GET /api/rates?types=DNp01,MDN&neurons=12,34   firing rates now
+GET /api/find?q=...     cell types by name, class or super class
+GET /api/practice       the practice copies, goal metrics and presets
+POST /api/skills/learn  {"name", "description", "keyframes" or "gait", "goal", "trials", "baseline",
+                         "assists", "drive_at", "refine": true to improve a learned skill}
+POST /api/skills/test   {"name", "assists", "goal", "runs"}: measured in a practice copy
+POST /api/skills/do     {"names": [...], "repeat": 1}: on the live fly
 
 {"cmd": "chat", "text": "..."} | {"cmd": "stop"} | {"cmd": "new_chat"} | {"cmd": "model_setup", "model": "qwen3.5-9b"}
 {"cmd": "model_custom", "kind": "hf" | "path" | "server", "value": "...", "model": "...", "api_key": "..."}
@@ -703,9 +764,12 @@ server/plasticity.py   learning: dopamine-gated plasticity of the mushroom body'
 server/calibration.py  keeps odours distinct in the antennal lobe and mushroom body
 server/neuroscience.py wiring queries: cell types, partners, strongest paths, activity-view groups
 server/body.py         stimuli -> sensory neurons; runs the body; what the body is doing
-server/skills.py       learning new movements: wiring search, practice, skill library
+server/skills.py       learning new movements: wiring search, shaping, practice for a goal, skill library
+server/practice.py     practice: goal metrics, the search (CMA-ES), background copies of the fly
+server/practice_worker.py  one background copy of the whole fly, run as fast as it goes
 server/agent/          the AI: runtime.py (llama.cpp setup), models.py, llm.py, system1.py (Laya),
-                       agent.py (loop, conversations, KV cache), tools.py, bridge.py (body link)
+                       agent.py (loop, conversations, KV cache), tools.py, bridge.py (body link),
+                       guide.md (the agent's guide to the system), flylab.py (Python helper for its scripts)
 server/data/           neuron labels and signs, senses, readouts, motor pools, leg sense organs,
                        loop-neuron mask, built-in skills (skills_builtin.json), and the
                        NeuroMechFly body model (neuromechfly.xml, from flygym, Apache 2.0)

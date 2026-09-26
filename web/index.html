@@ -137,11 +137,12 @@
       </div>
     </section>
     <section class="lab-sec" id="body-opts">
-      <h2>Body <small>physics, the legs' sense organs, and walking</small></h2>
+      <h2>Body <small>physics, the legs' sense organs, and the hand-built parts</small></h2>
       <div class="exp-group">
         <button data-body="physics" title="Physical body: gravity, contacts and friction on the arena floor (MuJoCo). Off = joint angles straight from the muscles.">Physics</button>
       <button data-body="feedback" title="The legs' sense organs (chordotonal organs, hair plates, campaniform sensilla, tarsal bristles) report joint angles, movement and load back into the nerve cord">Leg feedback</button>
-      <button data-body="rhythm" title="Walking: on, the walking command neurons (P9, MDN, DNa01/02) set the legs stepping, fast or slow, forwards or backwards, turning; off, only what the connectome does by itself. Click to switch.">Walking: on</button>
+      <button data-body="rhythm" title="Hand-built walking model: when the walking command neurons (P9, MDN, DNa01/02) fire, the legs step with a real fly's recorded steps, fast or slow, forwards or backwards, turning. Off: the legs do only what their motor neurons do. Click to switch.">Walking model: on</button>
+      <button data-body="flight_timer" title="Hand-built flight timer: a jump starts flight at once and flight power is held at cruise for 1.5 s, then eased off so the fly lands. Off: flight power is only what the wing power motor neurons give. Click to switch.">Flight timer: on</button>
       </div>
     </section>
   </div>
