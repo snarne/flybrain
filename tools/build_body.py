@@ -24,6 +24,8 @@ OUT = ROOT / "web" / "data"
 
 xml = ET.parse(DATA / "mjcf" / "neuromechfly_seqik_kinorder_ypr.xml").getroot()
 mesh_files = {m.get("name"): (DATA / "mjcf" / m.get("file")).resolve() for m in xml.find("asset").findall("mesh")}
+# left-side parts reuse the right-side mesh files, mirrored by a negative scale (e.g. "1000 -1000 1000")
+mesh_scale = {m.get("name"): np.array([float(x) for x in (m.get("scale") or "1000 1000 1000").split()]) for m in xml.find("asset").findall("mesh")}
 
 
 def floats(s, default):
@@ -44,8 +46,11 @@ def add_body(b, parent):
     if geoms:
         g = geoms[0]
         m = trimesh.load(mesh_files[g.get("mesh")], force="mesh")
-        v = np.asarray(m.vertices, np.float64) * 1000.0  # metres -> mm
+        sc = mesh_scale[g.get("mesh")]
+        v = np.asarray(m.vertices, np.float64) * sc          # metres -> mm, mirrored where the model mirrors
         f = np.asarray(m.faces, np.int64)
+        if np.prod(np.sign(sc)) < 0:
+            f = f[:, ::-1].copy()                             # a mirror flips the faces inside out: flip back
         n = len(f)
         target = int(min(7000, max(250, n * 0.12)))
         if n > target:

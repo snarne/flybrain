@@ -27,8 +27,10 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+import calibration
 import connectome
 import motor as motor_mod
+import neuroscience
 import sim
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,10 +61,12 @@ class World:
         self.indptr, self.indices = indptr, indices
         # "stable" adds spike-frequency adaptation to self-exciting loop neurons; "paper" is the plain
         # Shiu et al. model on the same wiring
-        self.weights = {"paper": w_signed, "stable": w_signed}
+        # (and calibrates the olfactory pathway so odours stay distinct: calibration.py)
+        self.weights = {"paper": w_signed, "stable": calibration.weights(self, w_signed)}
         loop_file = DATA / "loop_neurons.npy"
         adapt = np.load(loop_file) if loop_file.exists() else np.ones(len(indptr) - 1, bool)
         self.brain = sim.Brain(indptr, indices, self.weights["stable"], mode="stable", adapt_mask=adapt)
+        calibration.masks(self, self.brain)
         self.N = self.brain.N
         self.n_regions = len(self.tables["regions"])
         self.stim = {s["key"]: s for s in self.presets["stimuli"]}
@@ -81,6 +85,9 @@ class World:
         self.neuron_stim = {}         # idx -> Hz
         self.channel_stim = {}        # agent bridge channel -> {idx: Hz}
         self.blocked = set()
+        self.ablated = {}             # name -> neuron indices silenced for a whole experiment (ablate())
+        self.variant = "real"
+        self.wiring = (self.indptr, self.indices, self.weights["stable"])   # what the simulator runs
         self.paused = False
         self.speed = 1.0
         self.pending = deque()
@@ -130,16 +137,16 @@ class World:
         elif cmd == "block":                     # {"cmd":"block","idx":123,"on":true}
             i = int(c["idx"])
             (self.blocked.add if c.get("on", True) else self.blocked.discard)(i)
-            b.set_blocked(self.blocked)
+            self._push_blocked()
         elif cmd == "clear":                     # all inputs off
             self.active_presets.clear()
             self.neuron_stim.clear()
             self.blocked.clear()
-            b.set_blocked([])
+            self._push_blocked()
             self._push_stim()
         elif cmd == "reset":                     # quiet the brain, keep inputs
             b.reset()
-            b.set_blocked(self.blocked)
+            self._push_blocked()
             self._push_stim()
             self.hist.clear()
             self.rate[:] = 0
@@ -152,7 +159,80 @@ class World:
             if m in self.weights:
                 b.set_weights(self.weights[m])
                 b.mode = m
+                if getattr(self, "cpg", None) is not None and self.cpg.on:
+                    self.cpg.enable(True)
                 self.apply_command({"cmd": "reset"})
+
+    # ------------------------------------------------------------ controls for experiments
+    ABLATIONS = {
+        "vision": "visual projection neurons (all 7,284 carrying the optic lobes' output to the brain)",
+        "mushroom_body": "Kenyon cells (the mushroom body's 4,504 intrinsic neurons)",
+        "descending": "descending neurons (all 1,316 brain -> nerve cord)",
+        "giant_fibre": "the giant fibres (DNp01)",
+        "antennal_lobe": "antennal lobe projection neurons (smell -> brain)",
+        "lateral_horn": "lateral horn neurons (innate odour responses)",
+    }
+
+    def ablation_group(self, name):
+        """Neuron indices of a named group (ABLATIONS) or a cell type."""
+        cls = np.array(self.tables["class"])[self.cls]
+        sup = np.array(self.tables["super_class"])[self.sup]
+        g = {
+            "vision": lambda: np.where(sup == "visual_projection")[0],
+            "mushroom_body": lambda: np.where(cls == "kenyon_cell")[0],
+            "descending": lambda: np.where(sup == "descending")[0],
+            "giant_fibre": lambda: self.neurons_of_type("DNp01"),
+            "antennal_lobe": lambda: np.where(cls == "antennal_lobe_projection_neuron")[0],
+            "lateral_horn": lambda: np.where(np.char.startswith(cls.astype(str), "lateral_horn"))[0],
+        }.get(name)
+        return g() if g else self.neurons_of_type(name)
+
+    def ablate(self, name, on=True):
+        """Silence a group of neurons (they can't spike) until restored; survives resets and 'clear'.
+        Returns how many neurons that is."""
+        if on:
+            idx = self.ablation_group(name)
+            if len(idx):
+                self.ablated[name] = idx
+            n = len(idx)
+        else:
+            n = len(self.ablated.pop(name, []))
+        self._push_blocked()
+        return n
+
+    def _push_blocked(self):
+        idx = set(self.blocked)
+        for v in self.ablated.values():
+            idx.update(int(i) for i in v)
+        self.brain.set_blocked(idx)
+
+    VARIANTS = {
+        "real": "the BANC connectome",
+        "shuffled": "every synapse's target reassigned at random, keeping each neuron's number of inputs "
+                    "and outputs, its transmitter and each synapse's strength (degree-preserving shuffle)",
+        "no_inhibition": "all inhibitory synapses removed",
+    }
+
+    def set_variant(self, name="real", seed=0):
+        """Run the brain on a different version of the wiring (a control): the same neurons, sensors
+        and body, only the synapses differ. Learning restarts from the new wiring."""
+        w = self.weights["stable"]
+        ip, ix = self.indptr, self.indices
+        if name == "shuffled":
+            ix = np.random.default_rng(seed).permutation(ix).astype(ix.dtype)
+        elif name == "no_inhibition":
+            w = np.where(w < 0, 0, w).astype(w.dtype)
+        elif name != "real":
+            raise ValueError(f"unknown variant {name}")
+        self.variant = name
+        self.wiring = (ip, ix, w)
+        self.brain.set_connectome(ip, ix, w)
+        self.brain.mode = "stable"
+        if getattr(self, "cpg", None) is not None and self.cpg.on:
+            self.cpg.enable(True)
+        if getattr(self, "mb", None) is not None:
+            self.mb.rewire()
+        self.apply_command({"cmd": "reset"})
 
     def _push_stim(self):
         rates = {}
@@ -195,6 +275,10 @@ class World:
         a = np.exp(-sim_ms / 60.0)  # ~60 ms smoothing for the body's motor readout
         self.ro_fast = a * self.ro_fast + (1 - a) * ro / self.ro_sizes / (sim_ms / 1000.0)
         self.motor.update(spk, sim_ms / 1000.0)
+        if getattr(self, "cpg", None) is not None:
+            self.cpg.update(spk, sim_ms / 1000.0)
+        if getattr(self, "mb", None) is not None:
+            self.mb.update(spk, sim_ms / 1000.0)
         self.hist.append((t, sim_ms, reg, ro))
         while self.hist and self.hist[0][0] < t - WINDOW_MS:
             self.hist.popleft()
@@ -379,8 +463,14 @@ agent = runtime = system1 = bridge = None
 from body import Body  # noqa: E402
 from skills import SkillEngine  # noqa: E402
 
+from cpg import CPG  # noqa: E402
+from plasticity import MushroomBody  # noqa: E402
+
+world.cpg = CPG(world)   # the nerve cord's rhythm generators (on when the body's rhythm is "neurons")
+world.mb = MushroomBody(world)   # dopamine-gated learning at the mushroom body's KC -> MBON synapses
 body = Body(world)
 world.body = body  # so the agent's tools can run experiments on it
+body.set_rhythm(os.environ.get("FLYBRAIN_RHYTHM", "neurons"))
 # the physical body is the default wherever MuJoCo is installed; FLYBRAIN_BODY=kinematic turns it off
 if os.environ.get("FLYBRAIN_BODY", "physics").lower() != "kinematic":
     body.set_physics(True)
@@ -392,18 +482,22 @@ def handle_body_command(c):
     a = c.get("action")
     if a == "physics":                       # {"cmd":"body","action":"physics","on":true}
         body.set_physics(bool(c.get("on", True)))
-    elif a == "rhythms":                     # built-in walking/grooming rhythms on or off
+    elif a == "rhythm":                      # {"cmd":"body","action":"rhythm","mode":"neurons"|"replay"|"off"}
+        body.set_rhythm(c.get("mode", "neurons"))
+    elif a == "rhythms":                     # older form: on = replayed rhythms, off = none
         body.rhythms = bool(c.get("on", True))
-        if not body.rhythms and skills.state and skills.state.get("kind") == "reflex":
-            skills.stop()
     elif a == "feedback":                    # leg sense organs -> nerve cord, gain 0..2
         body.set_feedback(float(c.get("gain", 1.0)))
-    elif a == "reset":
+    elif a == "forget":                      # undo everything the mushroom body has learned
+        world.mb.forget()
+    elif a == "learning":                    # {"cmd":"body","action":"learning","on":false} freezes the synapses
+        world.mb.learning = bool(c.get("on", True))
+    elif a == "reset":                       # {"cmd":"body","action":"reset","home":true} also re-centres the fly
         skills.stop()
-        body.reset()
+        body.reset(home=bool(c.get("home", False)))
         world.pending.append({"cmd": "reset"})
-    else:
-        body.start(a, c.get("side"))
+    else:                                    # experiments and things put in the world (x, y optional, mm)
+        body.start(a, c.get("side"), **{k: float(c[k]) for k in ("x", "y") if k in c})
 
 
 async def explain_events():
@@ -580,6 +674,27 @@ def search(q: str):
         if len(m):
             return [{"neuron": world.brief(int(m[0]))}]
     return [{"type": n, "n": c} for n, c in hits[:20]]
+
+
+@app.get("/api/activity_groups")
+def get_activity_groups():
+    return neuroscience.activity_groups(world)
+
+
+def atlas():
+    if getattr(world, "atlas", None) is None:
+        world.atlas = neuroscience.Atlas(world)
+    return world.atlas
+
+
+@app.get("/api/typeinfo/{name}")
+def get_typeinfo(name: str):
+    return atlas().info(name) or JSONResponse({"error": f"unknown: {name}"}, status_code=404)
+
+
+@app.get("/api/path")
+def get_path(src: str, dst: str):
+    return atlas().path(src, dst)
 
 
 @app.get("/api/type/{name}")

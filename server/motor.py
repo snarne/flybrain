@@ -272,10 +272,19 @@ class Motor:
         for leg in LEGS:
             for dof, terms in LEG_JOINTS.items():
                 stiff[(leg, dof)] = float(min(1.0, sum(self.cocon.get(f"{leg}.{c}", 0.0) for c, _ in terms)))
+            j = self.index.get(f"{leg}.jump_ttm")
+            if j is not None:        # the jump muscle is the strongest in the leg: it stiffens the kick
+                a = float(self.act[j])
+                for dof in ("Femur", "Tibia"):
+                    stiff[(leg, dof)] = max(stiff[(leg, dof)], a)
             pos, _ = self.controls.get(f"{leg}.grip", ([], []))
             claw = float(self.act[pos].max()) if pos else 0.0
             lift = max(0.0, self.value.get(f"{leg}.lift", 0.0))
             adhesion[leg] = float(min(1.0, 1.5 * claw) * max(0.0, 1.0 - 3.0 * lift))
+        # taking off: the jump lets go of the ground (pads released)
+        jump = max((float(self.act[i]) for k, i in self.index.items() if k.endswith(".jump_ttm")), default=0.0)
+        if jump > 0.1:
+            adhesion = {leg: 0.0 for leg in adhesion}
         return stiff, adhesion
 
     def summary(self):

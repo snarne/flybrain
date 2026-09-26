@@ -1,40 +1,36 @@
 """
-A tethered fly whose every movement comes from its motor neurons.
+A fly whose every movement comes from its motor neurons, free in an arena.
 
-Like a real neuroscience rig, the fly is held over a floating ball. Every frame, in simulated time:
+Every frame, in simulated time:
 
-  1. Stimuli -> sensory neurons. A dark object looming at one eye fires that eye's LPLC2 looming
-     detectors (rate follows the shadow's angular expansion); a sugar or bitter drop touched to the
-     proboscis fires taste neurons; dust on the antennae fires Johnston's organ neurons. "Activate"
-     buttons drive chosen descending neurons directly, like optogenetics.
+  1. The world -> sensory neurons (arena.py). Food, odours, warm or cool air, humid or dry air,
+     threats and moving stripes reach the sensory neurons they would in a real fly, from where they
+     are relative to its antennae, eyes and feet. Dust on the antennae fires Johnston's organ neurons.
+     "Activate" buttons drive chosen descending neurons directly, like optogenetics.
   2. The whole brain and nerve cord connectome runs (BANC).
-  3. Motor neurons -> muscles -> joints (motor.py). Every motor neuron is annotated with the muscle
-     it drives, so legs, wings, neck, proboscis and antennae move only as their motor neurons fire.
-     Nothing is animated by hand.
+  3. Motor neurons -> muscles (motor.py) -> the body. The physical body (physics.py) walks, jumps
+     and flies under gravity; its legs' sense organs report back into the nerve cord (feedback.py).
+     Without MuJoCo a kinematic body stands in (joint angles straight from the muscles, movement
+     estimated from leg sweeps).
 
 The label on screen ("Feeding", "Escape jump", ...) is read from what the muscles are doing, with
 some hysteresis so a brief twitch doesn't flip it back and forth.
 
-The body comes in two kinds:
-- physical (default when MuJoCo is installed; physics.py): the NeuroMechFly body with gravity, contacts
-  and a real ball; muscles set each joint's target angle and stiffness; the legs' sense organs report
-  back into the nerve cord every frame (feedback.py), so the brain feels what its body did.
-- kinematic: joint angles straight from the muscles, ball estimated from leg sweeps.
-
-Two rules from fly physiology the connectome alone doesn't give:
-- Flight needs the feet off the ground. Tarsal contact inhibits flight, so a fly standing on the ball
-  doesn't beat its wings even if the flight power muscles' motor neurons fire; the giant-fibre jump
-  lifts the legs off and flight can start.
-- Rhythms: walking and grooming need nerve-cord rhythm generators the model lacks. When the brain's
-  command neurons for them fire, the matching built-in skill supplies the rhythm (skills.py). This
-  can be switched off ("connectome only") to see what the wiring does by itself.
+Rules from fly physiology the connectome alone doesn't give:
+- Feet on the ground stop flight (tarsal reflex): the flight motor only runs once no foot has touched
+  the ground for a moment, e.g. after the giant-fibre jump.
+- Rhythms: walking and grooming need nerve-cord rhythm generators. Three settings:
+  "neurons": the connectome's own premotor interneurons, given the slow burst dynamics of rhythm
+  circuits, make the steps (cpg.py); "replay": a stored neuron-drive pattern made from a real fly's
+  steps plays while the brain's command neurons for it fire (skills.py); "off": only what the wiring
+  does by itself.
 """
 import json
 import math
-from pathlib import Path
 
 import numpy as np
 
+import arena as arena_mod
 import feedback as feedback_mod
 import physics as physics_mod
 
@@ -47,12 +43,18 @@ ACTIVATE = {
     "gf": ("DNp01", "Giant fibre DNp01: escape takeoff (von Reyn et al. 2014)"),
     "adn": ("DNg62", "aDN1 / DNg62: antennal grooming (Hampel et al. 2015)"),
 }
+RHYTHMS = ("neurons", "replay", "off")
+# reinforcement, as fly labs give it: activating the mushroom body's dopamine neurons directly
+ODOURS = ("fruit", "co2", "geosmin", "cva")
+REINFORCE = {"reward": ("pam", "PAM dopamine neurons: reward (Liu et al. 2012; Burke et al. 2012)"),
+             "punish": ("ppl1", "PPL1 dopamine neurons: punishment (Claridge-Chang et al. 2009; Aso et al. 2010)")}
+LEGS = ("LF", "LM", "LH", "RF", "RM", "RH")
 
 
 class Body:
     def __init__(self, world):
         self.w = world
-        self.rhythms = True          # built-in rhythms for walking/grooming when their command neurons fire
+        self.rhythm = "replay"       # "neurons" | "replay" | "off" (see the module docstring)
         self.phys = None             # physics.PhysicsBody when the physical body is on
         self.phys_error = None
         self.sensed = None
@@ -61,14 +63,34 @@ class Body:
         steps = json.loads(physics_mod.BODY_JSON.read_text())["steps"]["legs"]
         self.neutral = {leg: {d: (min(v) + max(v)) / 2 for d, v in dofs.items()} for leg, dofs in steps.items()}
         self.fb = feedback_mod.Feedback(world.presets.get("proprio", []), world.motor.ranges, self.neutral)
+        self.arena = arena_mod.Arena(world)
         T = world.tables
         self.types = np.array(T["type"])[world.type]
         self.sides = np.array(T["side"])[world.side]
-        self.lplc2 = {s: np.where((self.types == "LPLC2") & (self.sides == s))[0].tolist() for s in ("left", "right")}
-        self.taste = {k: world.stim[k]["neurons"] for k in ("sugar", "bitter", "touch")}
+        self.jo = world.stim["touch"]["neurons"]
         self.events = []
         self.decisions = []       # traced "why" chains, newest last (filled by the app)
+        self.pose = {"x": 0.0, "y": 0.0, "heading": 0.0}      # kinematic body's place in the arena
         self.reset()
+
+    @property
+    def rhythms(self):             # older callers: rhythms on/off
+        return self.rhythm != "off"
+
+    @rhythms.setter
+    def rhythms(self, on):
+        self.set_rhythm("replay" if on else "off")
+
+    def set_rhythm(self, mode):
+        if mode not in RHYTHMS:
+            return
+        self.rhythm = mode
+        cpg = getattr(self.w, "cpg", None)
+        if cpg is not None:
+            cpg.enable(mode == "neurons")
+        eng = getattr(self.w, "skills", None)
+        if mode != "replay" and eng is not None and eng.state and eng.state.get("kind") == "reflex":
+            eng.stop()
 
     def neurons_for(self, spec):
         t, _, side = spec.partition(":")
@@ -98,87 +120,128 @@ class Body:
             self.w.pending.append({"cmd": "channel", "name": "proprio", "rate": 0})
 
     # ------------------------------------------------------------ experiments
-    def reset(self):
+    def reset(self, home=False):
+        """Calm the body down. home=True also puts the fly back in the middle of the arena."""
         self.mode, self.mode_t = "rest", 0.0
         self._pending, self._pending_t = None, 0.0
         self._swing = {}
         self.joints, self.parts = {}, {}
         self.airborne, self.air_t = False, 0.0
         self._reflex = None
-        self.loom = None          # {"side", "d"} distance in mm
-        self.probe = None         # {"kind", "t"}
         self.dust_t = 0.0
+        self.probe = None         # a drop touched to the proboscis by the experimenter: {"kind", "t"}
         self.active = {}          # activation key -> seconds left
-        self.ball = [0.0, 0.0]    # forward (mm/s), yaw (rad/s) of the ball under the fly
+        self.ball = [0.0, 0.0]    # the fly's own movement: forward (mm/s), turning (rad/s, + = right)
+        self._track = None
         self.rates, self.senses = {}, {}
+        self.world_rates = {}
         self._sent = {}
         self._untouched = 0.0
         self._cmd = None
-        self.sensed = None
         self.fb_rates, self.fb_summary = {}, {}
+        if home:
+            self.pose = {"x": 0.0, "y": 0.0, "heading": 0.0}
         if self.phys is not None:
-            self.phys.reset()
+            if home:
+                self.phys.reset(pos=(0.0, 0.0), heading=0.0)
+            elif self.sensed is not None:
+                th = self.sensed["thorax"]
+                self.phys.reset(pos=(self.sensed["pos"][0], self.sensed["pos"][1]), heading=self.sensed["heading"])
+            else:
+                self.phys.reset()
+            self.sensed = self.phys.sensed()
+        else:
+            self.sensed = None
         for name in list(self.w.channel_stim):
-            if name.startswith(("body_", "act_", "proprio")):
+            if name.startswith(("body_", "act_", "proprio", "world")):
                 self.w.pending.append({"cmd": "channel", "name": name, "rate": 0})
 
-    def start(self, action, arg=None):
-        if action == "loom":
-            self.loom = {"side": arg if arg in ("left", "right") else "left", "d": 32.0, "theta": None}
-        elif action in ("sugar", "bitter"):
-            self.probe = {"kind": action, "t": 0.0}
-        elif action == "dust":
+    def fly(self):
+        """Where the fly is and what its body is doing, for the arena's senses."""
+        prob = max(0.0, self.w.motor.value.get("proboscis.rostrum", 0.0))
+        if self.sensed is not None:
+            return arena_mod.fly_from_physics(self.sensed, prob)
+        p = self.pose
+        return arena_mod.fly_from_pose(p["x"], p["y"], p["heading"], -self.ball[1], prob)
+
+    def start(self, action, arg=None, **kw):
+        """Experiments and changes to the world. action: an ACTIVATE key, "dust", "probe_sugar",
+        "probe_bitter" (a drop touched to the proboscis), "stop", "clear",
+        or something to put in the world: sugar, bitter, fruit, co2, geosmin, cva, heat, cold, humid, dry,
+        threat (arg = side), loom (the same), stripes (arg = "left"/"right")."""
+        if action == "dust":
             self.dust_t = 1.6
+        elif action in ("probe_sugar", "probe_bitter"):
+            self.probe = {"kind": action.split("_")[1], "t": 0.0}
         elif action in ACTIVATE:
             self.active[action] = 2.5 if action != "gf" else 0.3
+        elif action in REINFORCE:
+            self.active[action] = 1.0
+            mb = getattr(self.w, "mb", None)
+            if mb is not None:
+                odours = sorted({o["odour"] for o in self.arena.objects if o["kind"] == "odour"})
+                mb.log.append({"t": round(self.w.brain.t_ms / 1000, 1), "reinforcement": action, "odours": odours})
         elif action == "stop":
-            self.loom, self.probe, self.dust_t, self.active = None, None, 0.0, {}
+            self.dust_t, self.active, self.probe = 0.0, {}, None
+            self.arena.objects = [o for o in self.arena.objects if o["kind"] not in ("threat", "target")]
+        elif action == "clear":
+            self.arena.clear()
+        elif action in ("loom", "threat"):
+            self.arena.add("threat", self.fly(), side=arg if arg in ("left", "right", "front", "back") else "left")
+        elif action == "stripes":
+            self.arena.add("stripes", self.fly(), speed=-1.5 if arg == "right" else 1.5)
+        elif action == "target":
+            self.arena.objects = [o for o in self.arena.objects if o["kind"] != "target"]
+            self.arena.add("target", self.fly(), side=arg if arg in ("left", "right") else "left")
+        elif action in ("sugar", "bitter", "fruit", "co2", "geosmin", "cva", "heat", "cold", "humid", "dry"):
+            self.arena.add(action, self.fly(), **kw)
 
-    # ------------------------------------------------------------ 1. stimuli -> sensory neurons
+    # ------------------------------------------------------------ 1. the world -> sensory neurons
     def sense(self, dt):
-        s = {}
-        loom_rate = {"left": 0.0, "right": 0.0}
-        L = self.loom
-        if L:
-            L["d"] -= 34.0 * dt                      # approaching at 34 mm/s
-            theta = 2 * math.atan(3.0 / max(L["d"], 0.5))
-            if L["theta"] is not None:
-                dtheta = (theta - L["theta"]) / max(dt, 1e-6)
-                if theta > math.radians(8):
-                    loom_rate[L["side"]] = min(200.0, 32.0 * max(dtheta, 0))
-            L["theta"] = theta
-            L["size_deg"] = math.degrees(theta)
-            if L["d"] < 1.0:
-                self.loom = None
-        s["loom_left"], s["loom_right"] = loom_rate["left"], loom_rate["right"]
+        rates = self.arena.sense(dt, self.fly())
+        if self.dust_t > 0:
+            for n in self.jo:
+                rates[n] = max(rates.get(n, 0.0), 150.0)
+            self.dust_t -= dt
         P = self.probe
-        if P:
+        if P:                                        # the drop touches the labellum from 0.35 s to 4.2 s
             P["t"] += dt
-            if 0.35 < P["t"] < 4.2:                  # the drop touches the proboscis tip
-                s[P["kind"]] = 150.0
+            if 0.35 < P["t"] < 4.2:
+                for n in self.w.stim[P["kind"]]["neurons"]:
+                    rates[n] = max(rates.get(n, 0.0), 150.0)
             if P["t"] > 4.6:
                 self.probe = None
-        if self.dust_t > 0:
-            s["touch"] = 150.0
-            self.dust_t -= dt
         for k in list(self.active):
             self.active[k] -= dt
             if self.active[k] <= 0:
                 del self.active[k]
-        self.senses = s
-
-        want = {f"body_{k}": (self.taste[k], s.get(k, 0.0)) for k in ("sugar", "bitter", "touch")}
-        for side in ("left", "right"):
-            want[f"body_loom_{side}"] = (self.lplc2[side], round(loom_rate[side], -1))
+        self.senses = dict(self.arena.felt)
+        mb = getattr(self.w, "mb", None)
+        if mb is not None:            # which odours the fly smells now (for what the mushroom body learns about each)
+            mb.smelling = {k.split(" ")[0] for k, v in self.senses.items() if k.split(" ")[0] in ODOURS and v >= 20}
+        if self.dust_t > 0:
+            self.senses["dust on the antennae"] = 150
+        if self.probe and 0.35 < self.probe["t"] < 4.2:
+            self.senses[f"{self.probe['kind']} on the proboscis"] = 150
+        if rates != self.world_rates:
+            self.world_rates = rates
+            self.w.pending.append({"cmd": "channel", "name": "world", "rates": rates} if rates
+                                  else {"cmd": "channel", "name": "world", "rate": 0})
         for key, (spec, _) in ACTIVATE.items():
-            want[f"act_{key}"] = (self.neurons_for(spec), 150.0 if key in self.active else 0.0)
-        for name, (neurons, rate) in want.items():
-            if self._sent.get(name) != rate:
-                self._sent[name] = rate
-                self.w.pending.append({"cmd": "channel", "name": name, "neurons": neurons, "rate": rate})
+            rate = 150.0 if key in self.active else 0.0
+            if self._sent.get(key) != rate:
+                self._sent[key] = rate
+                self.w.pending.append({"cmd": "channel", "name": f"act_{key}", "neurons": self.neurons_for(spec), "rate": rate})
+        mb = getattr(self.w, "mb", None)
+        for key, (group, _) in REINFORCE.items():
+            rate = 150.0 if key in self.active else 0.0
+            if mb is not None and self._sent.get(key) != rate:
+                self._sent[key] = rate
+                self.w.pending.append({"cmd": "channel", "name": f"act_{key}",
+                                       "neurons": [int(n) for n in getattr(mb, group)], "rate": rate})
 
     # ------------------------------------------------------------ 3. what is the body doing?
-    REFLEX = {  # built-in skill played while these command neurons fire: (readout, threshold Hz)
+    REFLEX = {  # built-in skill played while these command neurons fire
         "walk_forward": "Walking forwards", "walk_backward": "Walking backwards", "turn_left": "Turning left",
         "turn_right": "Turning right", "groom_antennae": "Grooming its antennae"}
 
@@ -201,39 +264,46 @@ class Body:
         self.rates = r
         v = motor.value
         eng = getattr(self.w, "skills", None)
-        rx = self._reflex_for(r) if self.rhythms else None
+        rx = self._reflex_for(r) if self.rhythm == "replay" else None
         if rx and eng is not None and not eng.state and not eng.busy and eng.get(rx[0]):
             if not (self.mode == "reflex" and self._reflex == rx[0]):
                 self.events.append({"event": rx[0], "key": rx[1], "why": rx[2]})
             self._reflex = rx[0]
             eng.reflex(rx[0])
-        legs = ("LF", "LM", "LH", "RF", "RM", "RH")
-        leg_act = {leg: max(abs(v.get(f"{leg}.{c}", 0)) for c in ("swing", "lift", "reach", "grip")) for leg in legs}
+        leg_act = {leg: max(abs(v.get(f"{leg}.{c}", 0)) for c in ("swing", "lift", "reach", "grip")) for leg in LEGS}
         power = max(v.get("wingL.power", 0), v.get("wingR.power", 0))
         ttm = [i for i, k in enumerate(motor.key) if k.endswith(".jump_ttm")]
         jump = float(motor.act[ttm].max()) if ttm else 0.0
+        fwd, turn = self.ball[0], -self.ball[1]
+        walking = self.sensed is not None and abs(fwd) > 1.0 and max(leg_act.values()) > 0.2
         cands = [
             # label, key for the "why" trace, condition, text
             ("jump", "escape", jump > 0.3 and r.get("escape", 0) > 20, f"jump muscle motor neuron (TTMn) driven by the giant fibre ({r.get('escape', 0):.0f} Hz)"),
             ("fly", "wing.dorsal_longitudinal.L", power > 0.3, "wing power motor neurons (DLM/DVM) firing"),
             ("feed", "proboscis.proboscis_m9.L", v.get("proboscis.rostrum", 0) > 0.25, "MN9 extends the proboscis"),
             ("groom", "groom", r.get("groom", 0) > 5 and max(leg_act["LF"], leg_act["RF"]) > 0.2, f"aDN grooming neurons at {r.get('groom', 0):.0f} Hz, front legs moving"),
+            ("walk", None, walking, "legs stepping"),
             ("legs", None, max(leg_act.values()) > 0.25, "leg motor neurons firing"),
         ]
-        # flight: only once the feet are off the ball (after a jump), and while the power muscles stay on
-        if jump > 0.3 and r.get("escape", 0) > 20:     # a giant-fibre jump lifts the feet off the ball
-            self.airborne, self.air_t = True, 0.0
-        elif self.airborne:
-            self.air_t = self.air_t + dt if power < 0.2 else 0.0
-            if self.air_t > 0.4:
-                self.airborne = False
+        # flight: the tarsal reflex. With feet on the ground the flight motor is held off; it runs once
+        # no foot has touched the ground for 0.1 s (after a jump, or when lifted), for as long as the
+        # flight power muscles keep going
         if self.sensed is not None:
-            # physical body: the tarsal reflex reads real contact; with no foot on the ball for 0.2 s the
-            # flight motor is released, as when a fly is lifted off the ground
             touching = sum(self.sensed["touch"].values())
             self._untouched = self._untouched + dt if touching == 0 else 0.0
-            if self._untouched > 0.2 and power > 0.3:
+            if self._untouched > 0.1 and power > 0.3:
                 self.airborne, self.air_t = True, 0.0
+            elif self.airborne and (touching >= 3 or power < 0.2):
+                self.air_t += dt
+                if self.air_t > 0.3:
+                    self.airborne = False
+        else:
+            if jump > 0.3 and r.get("escape", 0) > 20:
+                self.airborne, self.air_t = True, 0.0
+            elif self.airborne:
+                self.air_t = self.air_t + dt if power < 0.2 else 0.0
+                if self.air_t > 0.4:
+                    self.airborne = False
         cands[1] = ("fly", cands[1][1], self.airborne and power > 0.3, cands[1][3])
         want = next(((lab, key, why) for lab, key, cond, why in cands if cond), ("rest", None, ""))
         if skill:
@@ -246,10 +316,10 @@ class Body:
             stronger = self.mode == "rest" or (want[0] in order and self.mode in order and order.index(want[0]) < order.index(self.mode))
             need = 0.1 if (stronger or want[0] in ("skill", "reflex")) else 0.5
             if self._pending_t >= need:
-                if want[0] == "legs":
-                    key = max((f"{leg}.{c}" for leg in legs for c in ("swing", "lift", "reach", "grip")), key=lambda k: abs(v.get(k, 0)))
+                if want[0] in ("legs", "walk"):
+                    key = max((f"{leg}.{c}" for leg in LEGS for c in ("swing", "lift", "reach", "grip")), key=lambda k: abs(v.get(k, 0)))
                     pools = motor.controls[key][0 if v.get(key, 0) >= 0 else 1]
-                    want = ("legs", motor.key[pools[0]] if pools else None, f"{key} motor neurons firing")
+                    want = (want[0], motor.key[pools[0]] if pools else None, f"{key} motor neurons firing")
                 self._set(want[0], want[1], want[2])
         else:
             self._pending, self._pending_t = None, 0.0
@@ -257,22 +327,33 @@ class Body:
         self.joints = motor.joints()
         self.parts = motor.summary()
         if self.phys is not None:
-            # physical body: the muscles' commands go to the next physics step; the pose and ball shown
-            # are what the physics made of the last ones
+            # physical body: the muscles' commands go to the next physics step; the pose shown is what
+            # the physics made of the last ones
             stiff, adh = motor.muscles()
             target = {(leg, d): self.neutral[leg][d] + off for leg, dofs in self.joints["legs"].items() for d, off in dofs.items()}
-            self._cmd = (target, stiff, adh)
+            steer = v.get("wingR.stroke", 0) - v.get("wingL.stroke", 0)      # a bigger right stroke turns left
+            flight = {"power": power if self.airborne else 0.0, "steer": steer, "jump": jump}
+            self._cmd = (target, stiff, adh, flight)
             if self.sensed is not None:
                 A = self.sensed["angle"]
                 self.joints["legs"] = {leg: {d: round(A[(leg, d)] - self.neutral[leg][d], 4) for d in physics_mod.DOFS}
                                        for leg in physics_mod.LEGS}
-                self.ball = [self.sensed["forward"], -self.sensed["yaw"]]
+                # how the fly moves, as a tracker would measure it: from its position and heading over
+                # time (the instantaneous body velocity jitters with every step), ~0.1 s smoothing
+                th, hd = self.sensed["thorax"], self.sensed["heading"]
+                if self._track is not None:
+                    (x0, y0, h0) = self._track
+                    dx, dy = th[0] - x0, th[1] - y0
+                    fwd = (dx * math.cos(h0) + dy * math.sin(h0)) / max(dt, 1e-3)
+                    turn = math.remainder(hd - h0, 2 * math.pi) / max(dt, 1e-3)       # + = left
+                    k = 1.0 - math.exp(-dt / 0.1)
+                    self.ball = [self.ball[0] + k * (fwd - self.ball[0]), self.ball[1] + k * (-turn - self.ball[1])]
+                self._track = (th[0], th[1], hd)
             return
-        # kinematic body: the ball turns under the legs that are on it: a leg in stance (not lifted)
-        # sweeping backwards pushes the fly forwards, sweeping forwards pushes it backwards; left vs
-        # right turns it
+        # kinematic body: movement estimated from the legs in stance (not lifted): sweeping back pushes
+        # the fly forwards, sweeping forwards pushes it backwards, left vs right turns it
         fwd_l = fwd_r = 0.0
-        for leg in legs:
+        for leg in LEGS:
             s_now = v.get(f"{leg}.swing", 0)
             ds = s_now - self._swing.get(leg, s_now)
             self._swing[leg] = s_now
@@ -285,6 +366,12 @@ class Body:
         k = 0.12
         self.ball = [(1 - k) * self.ball[0] + k * 0.6 * (fwd_l + fwd_r) / 2,
                      (1 - k) * self.ball[1] + k * 0.35 * (fwd_l - fwd_r)]   # + = left legs push harder = turning right
+        p = self.pose
+        p["heading"] -= self.ball[1] * dt
+        p["x"] += self.ball[0] * dt * math.cos(p["heading"])
+        p["y"] += self.ball[0] * dt * math.sin(p["heading"])
+        lim = physics_mod.ARENA - 2
+        p["x"], p["y"] = max(-lim, min(lim, p["x"])), max(-lim, min(lim, p["y"]))
 
     def physics_step(self, dt):
         """Run the physical body for dt seconds on the last muscle commands, then report what the legs'
@@ -295,11 +382,12 @@ class Body:
             return
         self.sensed = ph.step(dt, *self._cmd)
         eng = getattr(self.w, "skills", None)
-        moving = bool(eng is not None and eng.state)     # a rhythm or skill is running: gate claw/hook
-        rates = self.fb.rates(self.sensed, moving)
+        moving = bool(eng is not None and eng.state) or self.rhythm == "neurons" and self.mode in ("walk", "legs", "groom")
+        rates = self.fb.rates(self.sensed, moving, dt)
         if rates != self.fb_rates:
             self.fb_rates = rates
-            self.w.pending.append({"cmd": "channel", "name": "proprio", "rates": rates})
+            self.w.pending.append({"cmd": "channel", "name": "proprio", "rates": rates} if rates
+                                  else {"cmd": "channel", "name": "proprio", "rate": 0})
         self.fb_summary = self.fb.summary(rates)
 
     def _set(self, mode, key, why):
@@ -309,26 +397,43 @@ class Body:
 
     # ------------------------------------------------------------ to the browser
     def state(self, skill=None):
-        L, P = self.loom, self.probe
         return {
             "type": "body", "mode": self.mode, "skill": skill, "airborne": self.airborne,
             "joints": self.joints, "parts": self.parts, "ball": [round(b, 3) for b in self.ball],
             "rates": {k: round(v, 1) for k, v in self.rates.items() if v >= 0.5},
-            "senses": {k: round(v) for k, v in self.senses.items() if v},
-            "loom": {"side": L["side"], "d": round(L["d"], 2)} if L else None,
-            "probe": {"kind": P["kind"], "t": round(P["t"], 2)} if P else None,
+            "senses": self.senses,
             "dust": self.dust_t > 0,
+            "probe": {"kind": self.probe["kind"], "t": round(self.probe["t"], 2)} if self.probe else None,
             "active": sorted(self.active),
+            "fly": self.fly_pose(),
+            "arena": self.arena.view(),
             "physics": self.physics_info(),
+            "memory": self.memory(),
         }
+
+    def memory(self):
+        mb = getattr(self.w, "mb", None)
+        if mb is None:
+            return None
+        return {"learning": mb.learning, "odours": mb.memories(), "changed": dict(list(mb.summary().items())[:6]),
+                "pairings": mb.log[-6:]}
+
+    def fly_pose(self):
+        """Where the fly's root body is in the arena (mm) and which way up (quaternion w, x, y, z)."""
+        if self.sensed is not None:
+            return {"pos": [round(x, 4) for x in self.sensed["pos"]], "quat": [round(x, 5) for x in self.sensed["quat"]],
+                    "heading": round(self.sensed["heading"], 4)}
+        p = self.pose
+        h = p["heading"]
+        return {"pos": [round(p["x"], 4), round(p["y"], 4), None], "quat": [math.cos(h / 2), 0, 0, math.sin(h / 2)],
+                "heading": round(h, 4)}
 
     def physics_info(self):
         ph = self.phys
         info = {"on": ph is not None, "available": physics_mod.available(), "error": self.phys_error,
-                "rhythms": self.rhythms, "feedback": self.fb.gain}
+                "rhythm": self.rhythm, "rhythms": self.rhythms, "feedback": self.fb.gain}
         if ph is not None:
-            info.update({"ball_z": round(ph.ball_z, 4), "ball_q": [round(x, 5) for x in ph.ball_quat()],
-                         "cost": round(ph.cost, 2), "touch": self.sensed["touch"] if self.sensed else {},
+            info.update({"cost": round(ph.cost, 2), "touch": self.sensed["touch"] if self.sensed else {},
                          "senses": {k: v for k, v in self.fb_summary.items() if v > 0}})
         return info
 

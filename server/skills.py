@@ -333,7 +333,7 @@ class SkillEngine:
         return True
 
     def ball_summary(self, s):
-        """What the movement did to the ball (the physical result, as a tracker would measure it)."""
+        """How the movement moved the fly (the physical result, as a tracker would measure it)."""
         b = (s or {}).get("ball") or []
         if not b:
             return None
@@ -477,7 +477,7 @@ class SkillEngine:
                  "Legs: LF LM LH RF RM RH (Left/Right, Front/Middle/Hind). Per leg:"]
         lines += [f"  <leg>.{c}: {txt}" for c, txt in self.CONTROL_TEXT.items()]
         lines += ["Wings (each side, wingL/wingR): .power 0..1 flight muscles (the wings only beat once the feet are off "
-                  "the ball, e.g. after a jump); .extend 0..1 hold the wing out; .stroke + bigger / - smaller wingbeat.",
+                  "the ground, e.g. after a jump); .extend 0..1 hold the wing out; .stroke + bigger / - smaller wingbeat.",
                   "Head: head.yaw (+ left), head.pitch (+ up), head.roll. Proboscis: proboscis.rostrum, .haustellum, "
                   ".labellum (0..1 extend), .pump. Antennae: antennaL, antennaR. Halteres: haltereL, haltereR. "
                   "Abdomen: abdomen.curl (0..1), abdomen.bend (+ left / - right).",
@@ -505,13 +505,13 @@ class SkillEngine:
                   "last value after its last keyframe, so return it to 0 explicitly.",
                   "  This body's built-in walk: 2 steps per second (what the neural drive can follow reliably).",
                   "",
-                  "PHYSICS (the body is simulated with gravity, contacts and a real ball):",
-                  "  A foot moves the ball only while it is down and pressing (lift <= 0); lift it (lift > 0.3) to swing "
-                  "it forward without dragging the ball back. Claws (grip +) engage the sticky pads: needed to pull the "
-                  "ball, e.g. for walking backwards. Hind legs do most of the pushing (reach + during stance, i.e. the "
-                  "tibia extending, drives the fly forward); middle legs mostly by twist and swing; front legs little.",
-                  "  Agonist + antagonist together stiffen a joint; a relaxed joint is floppy and gets dragged by the ball.",
-                  "  learn_skill and body_experiment report what the ball did (forward mm/s, turning rad/s): use it to "
+                  "PHYSICS (the body stands and walks on the ground under gravity, with friction and sticky foot pads):",
+                  "  A foot pushes the body only while it is down and pressing (lift <= 0); lift it (lift > 0.3) to swing "
+                  "it forward without dragging. Claws (grip +) engage the sticky pads: needed to pull, e.g. for walking "
+                  "backwards. Hind legs do most of the pushing (reach + during stance, i.e. the tibia extending, drives "
+                  "the fly forward); middle legs mostly by twist and swing; front legs little.",
+                  "  Agonist + antagonist together stiffen a joint; a relaxed joint is floppy and gives under the body's weight.",
+                  "  learn_skill and body_experiment report how the fly moved (forward mm/s, turning rad/s): use it to "
                   "check a movement had the physical effect you wanted, and refine_skill if not.",
                   "",
                   "WORKED EXAMPLES (built-in skills, learned on this connectome):"]

@@ -13,18 +13,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 WORKSPACE = ROOT / "workspace"
 MEMORY_FILE = ROOT / "data" / "memory.json"
+BENCH_DIR = ROOT / "data" / "benchmark" / "agent"
 MAX_OUT = 8000
 
 SHELL = "PowerShell" if sys.platform == "win32" else ("zsh/bash (macOS)" if sys.platform == "darwin" else "bash")
 
 
 EXPERIMENTS = {
-    "threat_left": ("loom", "left"), "threat_right": ("loom", "right"), "sugar": ("sugar", None),
-    "bitter": ("bitter", None), "dust": ("dust", None), "p9": ("p9", None), "mdn": ("mdn", None),
-    "dna02_left": ("dna02_l", None), "dna02_right": ("dna02_r", None), "giant_fibre": ("gf", None), "adn": ("adn", None),
+    # things in the fly's world (it senses them from where they are; natural behaviour)
+    "threat_left": ("loom", "left"), "threat_right": ("loom", "right"), "sugar_drop": ("sugar", None),
+    "bitter_drop": ("bitter", None), "fruit_odour": ("fruit", None), "co2": ("co2", None), "geosmin": ("geosmin", None),
+    "heat_zone": ("heat", None), "cold_zone": ("cold", None), "humid_zone": ("humid", None), "dry_zone": ("dry", None),
+    "stripes_left": ("stripes", "left"), "stripes_right": ("stripes", "right"),
+    "target_left": ("target", "left"), "target_right": ("target", "right"),
+    # what an experimenter does to the fly
+    "sugar": ("probe_sugar", None), "bitter": ("probe_bitter", None), "dust": ("dust", None),
+    # activating descending neurons directly (optogenetics)
+    "p9": ("p9", None), "mdn": ("mdn", None), "dna02_left": ("dna02_l", None), "dna02_right": ("dna02_r", None),
+    "giant_fibre": ("gf", None), "adn": ("adn", None),
 }
-MODE_TEXT = {"rest": "resting", "legs": "moving its legs", "groom": "grooming its antennae", "feed": "feeding (proboscis out)",
-             "jump": "escape jump", "fly": "flying", "skill": "doing a skill"}
+MODE_TEXT = {"rest": "resting", "legs": "moving its legs", "walk": "walking", "groom": "grooming its antennae",
+             "feed": "feeding (proboscis out)", "jump": "escape jump", "fly": "flying", "skill": "doing a skill",
+             "reflex": "stepping (replayed rhythm)"}
 
 
 def _fn(name, description, props, required=()):
@@ -56,14 +66,54 @@ TOOLS = [
         {"sense": {"type": "string", "description": "one of: sugar, water, bitter, touch, looming, light, motion, "
                    "fruit, geosmin, cva, co2, heat, cold, humid"},
          "seconds": {"type": "number", "description": "0.2 to 5, default 1"}}, ["sense"]),
-    _fn("body_experiment", "Run an experiment on your tethered fly body (shown to the user in 3D) and find out what "
-        "your brain made the body do and why: the behaviours it switched between, which muscles moved, and the "
-        "neuron-by-neuron pathway traced through the connectome for each decision.",
+    _fn("body_experiment", "Run an experiment on your fly body, which walks freely in an arena (shown to the user in "
+        "3D), and find out what your brain made the body do and why: the behaviours it switched between, how it moved, "
+        "which muscles worked, and the neuron-by-neuron pathway traced through the connectome for each decision.",
         {"experiment": {"type": "string", "enum": list(EXPERIMENTS),
-                        "description": "threat_left/threat_right: a dark object looms at one eye; sugar/bitter: a drop "
-                        "touched to the proboscis; dust: dust on the antennae; p9, mdn, dna02_left, dna02_right, "
-                        "giant_fibre, adn: activate those descending neurons directly (optogenetics)"}},
+                        "description": "Things put in the world near the fly, sensed from where they are: threat_left/"
+                        "threat_right (a dark object swooping from that side), sugar_drop/bitter_drop (under its front "
+                        "feet), fruit_odour, co2, geosmin (an odour source ahead), heat_zone, cold_zone, humid_zone, "
+                        "dry_zone (air around it), stripes_left/stripes_right (a turning striped drum), target_left/target_right "
+                        "(a small dark object darting back and forth ahead to that side). What an "
+                        "experimenter does: sugar/bitter (a drop touched to the proboscis), dust (on the antennae). "
+                        "Optogenetics: p9, mdn, dna02_left, dna02_right, giant_fibre, adn (activate those descending "
+                        "neurons directly)."},
+         "record": {"type": "array", "items": {"type": "string"}, "description": "optional: cell types whose firing "
+                    "rates to record during the experiment (mean and peak Hz)"}},
         ["experiment"]),
+    # ---- neuroscientist tools: read the wiring, intervene, measure, compare
+    _fn("find_neurons", "Search the BANC connectome's cell types by name, class or super class (e.g. 'LPLC2', 'DNa', "
+        "'kenyon', 'descending', 'gustatory'). Returns each type's count, class, transmitter, regions, sides and how "
+        "active it is right now.", {"query": {"type": "string"}}, ["query"]),
+    _fn("neuron_info", "Everything about one cell type (or a neuron index / BANC root id): what it is, its transmitter, "
+        "where it is, how fast it fires now, its strongest input and output cell types (synapses, excites/inhibits, share), "
+        "and what the app uses it for (behaviour readout, sense, motor pool).", {"name": {"type": "string"}}, ["name"]),
+    _fn("trace_path", "The strongest chain of cell types in the connectome from one cell type to another (each step "
+        "weighted by how much of the next type's input it provides), with synapse counts and signs. Use it to form a "
+        "hypothesis about which neurons carry a signal; then test it by silencing them.",
+        {"from_type": {"type": "string"}, "to_type": {"type": "string"}}, ["from_type", "to_type"]),
+    _fn("activate_neurons", "Activate every neuron of a cell type (optogenetics-style, Poisson spikes) for a few seconds "
+        "and watch what the fly does, optionally recording the firing rates of other cell types meanwhile.",
+        {"cell_type": {"type": "string"}, "seconds": {"type": "number", "description": "0.2-5, default 2"},
+         "rate": {"type": "number", "description": "Hz, default 150"},
+         "record": {"type": "array", "items": {"type": "string"}, "description": "cell types to record (mean and peak Hz)"}},
+        ["cell_type"]),
+    _fn("silence_neurons", "Silence a group of neurons (they can't fire) until restored: an ablation that stays through "
+        "experiments and resets. Groups: vision, mushroom_body, descending, giant_fibre, antennal_lobe, lateral_horn; or "
+        "any cell type name. restore=true undoes it. With no group, lists what is silenced.",
+        {"group": {"type": "string"}, "restore": {"type": "boolean"}}),
+    _fn("run_benchmark", "Score the fly against published experiments in a separate copy of the model (takes a minute "
+        "or more; the live fly keeps running). Choose experiments (default: all), silence groups (ablate), or run on a "
+        "control wiring (variant: shuffled = degree-preserving random rewiring, no_inhibition). Saved under a label so "
+        "you can compare runs.",
+        {"experiments": {"type": "array", "items": {"type": "string"}, "description": "benchmark keys, e.g. loom_left, "
+                         "p9_forward, sugar_mouth, fruit_approach, learn_punish; empty = all"},
+         "ablate": {"type": "array", "items": {"type": "string"}},
+         "variant": {"type": "string", "enum": ["real", "shuffled", "no_inhibition"]},
+         "repeats": {"type": "integer", "description": "1-3, default 1"},
+         "label": {"type": "string", "description": "short name for this run"}}),
+    _fn("compare_runs", "Compare saved benchmark runs (by label) experiment by experiment. Without labels, lists the "
+        "saved runs.", {"labels": {"type": "array", "items": {"type": "string"}}}),
     _fn("list_skills", "List the movements your body has already learned (your motor skill cache). Check this "
         "before learning something new: a learned skill can be done instantly with do_skills.", {}),
     _fn("learn_skill", "Teach your fly body a NEW movement it has never done (e.g. tapping a key, waving a leg). "
@@ -124,10 +174,10 @@ def _load_memory():
 
 
 def _ball_text(b):
-    """The physical result of a movement: what the ball under the fly did."""
+    """The physical result of a movement: how the fly moved over the ground."""
     if not b:
         return ""
-    return (f"On the ball: {b['forward_mm_s']:+.2f} mm/s forward on average (peak {b['peak_forward_mm_s']:+.2f}), "
+    return (f"Movement: {b['forward_mm_s']:+.2f} mm/s forward on average (peak {b['peak_forward_mm_s']:+.2f}), "
             f"turning {b['turn_left_rad_s']:+.2f} rad/s (+ = left). ")
 
 class ToolRunner:
@@ -265,17 +315,21 @@ class ToolRunner:
         return (f"{st['firing']} neurons firing. Behaviour: {beh}. Regions (spikes/s): {reg}. "
                 f"Most active neurons: {top or 'none'}. Inputs on: {list(st['inputs']['presets']) or 'none'}."), True, {}
 
-    async def t_body_experiment(self, experiment):
-        body = getattr(self.world, "body", None)
-        if body is None:
-            return "The body isn't running.", False, {}
-        if experiment not in EXPERIMENTS:
-            return f"Unknown experiment '{experiment}'. Options: {', '.join(EXPERIMENTS)}", False, {}
-        action, side = EXPERIMENTS[experiment]
+    async def _watch(self, seconds, record=(), label=""):
+        """Let the live fly run for `seconds` of brain time; summarise what the body did (and the recorded
+        cell types' firing)."""
+        body = self.world.body
+        rec = {}
+        for t in record or ():
+            name, idx = self._atlas().resolve(t)
+            if name is not None:
+                rec[name] = idx
         t0, n0, wall0 = self.world.brain.t_ms, len(body.decisions), time.time()
-        body.start(action, side)
         modes, peak_rates, peak_muscles, ball = [], {}, {}, []
-        while self.world.brain.t_ms < t0 + 5000 and time.time() - wall0 < 60:
+        rsum = {k: 0.0 for k in rec}
+        rpeak = {k: 0.0 for k in rec}
+        nsamp = 0
+        while self.world.brain.t_ms < t0 + seconds * 1000 and time.time() - wall0 < 12 * seconds + 10:
             await asyncio.sleep(0.05)
             ball.append(tuple(body.ball))
             if not modes or modes[-1] != body.mode:
@@ -284,6 +338,11 @@ class ToolRunner:
                 peak_rates[k] = max(peak_rates.get(k, 0), v)
             for k, v in body.parts.items():
                 peak_muscles[k] = max(peak_muscles.get(k, 0), abs(v))
+            nsamp += 1
+            for k, idx in rec.items():
+                hz = float(self.world.rate[idx].mean())
+                rsum[k] += hz
+                rpeak[k] = max(rpeak[k], hz)
         seq = " -> ".join(MODE_TEXT.get(m, m) for m in modes) or "resting"
         rates = ", ".join(f"{k} {v:.0f} Hz" for k, v in sorted(peak_rates.items(), key=lambda x: -x[1]) if v >= 3) or "none"
         muscles = ", ".join(k.replace("_", " ") for k, v in sorted(peak_muscles.items(), key=lambda x: -x[1]) if v > 0.15) or "none"
@@ -294,11 +353,144 @@ class ToolRunner:
             why.append(f"- {d['title']}: {d['why']}. Pathway: {chain}{inh}")
         fwd = sum(b[0] for b in ball) / max(len(ball), 1)
         turn = -sum(b[1] for b in ball) / max(len(ball), 1)
-        kind = "physical body" if getattr(body, "phys", None) is not None else "kinematic body (ball estimated)"
-        return (f"Experiment '{experiment}' on the tethered fly ({kind}), 5 s of brain time. Body: {seq}. "
-                f"Ball: {fwd:+.1f} mm/s forward, turning {turn:+.2f} rad/s (+ = left). "
-                f"Peak command/motor neuron rates: {rates}. Muscles used: {muscles}.\n"
-                + ("Decisions, traced through the connectome:\n" + "\n".join(why) if why else "No behaviour change was triggered.")), True, {}
+        kind = "physical body" if getattr(body, "phys", None) is not None else "kinematic body (movement estimated)"
+        felt = ", ".join(sorted(getattr(body, "senses", {}) or {})) or "nothing more"
+        recorded = ""
+        if rec:
+            recorded = "Recorded firing (mean / peak over the run): " + ", ".join(
+                f"{k} {rsum[k] / max(nsamp, 1):.1f} / {rpeak[k]:.1f} Hz" for k in rec) + ".\n"
+        silenced = f" Silenced: {', '.join(self.world.ablated)}." if self.world.ablated else ""
+        return (f"{label} ({kind}, leg rhythm: {getattr(body, 'rhythm', '?')}, wiring: {self.world.variant}), "
+                f"{seconds:g} s of brain time.{silenced} Body: {seq}. Movement: {fwd:+.1f} mm/s forward on average, "
+                f"turning {turn:+.2f} rad/s (+ = left). Still sensing at the end: {felt}. "
+                f"Peak command/motor neuron rates: {rates}. Muscles used: {muscles}.\n" + recorded
+                + ("Decisions, traced through the connectome:\n" + "\n".join(why) if why else "No behaviour change was triggered."))
+
+    async def t_body_experiment(self, experiment, record=None):
+        body = getattr(self.world, "body", None)
+        if body is None:
+            return "The body isn't running.", False, {}
+        if experiment not in EXPERIMENTS:
+            return f"Unknown experiment '{experiment}'. Options: {', '.join(EXPERIMENTS)}", False, {}
+        action, side = EXPERIMENTS[experiment]
+        body.start(action, side)
+        return await self._watch(5.0, record, f"Experiment '{experiment}' on the fly"), True, {}
+
+    # ------------------------------------------------------------ neuroscientist tools
+    def _atlas(self):
+        if getattr(self.world, "atlas", None) is None:
+            from neuroscience import Atlas
+            self.world.atlas = Atlas(self.world)
+        return self.world.atlas
+
+    async def t_find_neurons(self, query):
+        hits = await asyncio.to_thread(self._atlas().find, query)
+        if not hits:
+            return f"No cell types match '{query}'.", True, {}
+        return "\n".join(f"- {h['type']}: {h['n']} neurons, {h['class'] or h['super_class'] or 'unclassified'}, "
+                         f"{h['transmitter'] or 'transmitter unknown'}, in {', '.join(h['regions'])}; "
+                         f"sides {h['sides']}; now {h['hz_now']} Hz (max {h['hz_max']})" for h in hits), True, {}
+
+    async def t_neuron_info(self, name):
+        d = await asyncio.to_thread(self._atlas().info, name)
+        if d is None:
+            return f"No cell type or neuron called '{name}'. Try find_neurons.", False, {}
+        part = lambda xs: "; ".join(f"{x['type']} {x['sign']} ({x['synapses']} syn, {100 * x['share']:.0f}%, now {x['hz_now']} Hz)"
+                                    for x in xs) or "none"
+        return (f"{d['type']}: {d['n']} neurons, class {d['class'] or '-'} ({d['super_class'] or '-'}), transmitter "
+                f"{d['transmitter'] or 'unknown'}, in {', '.join(d['regions'])}, sides {d['sides']}. Firing now: mean "
+                f"{d['hz_now']} Hz, max {d['hz_max']} Hz.\nInputs: {part(d['inputs'])}\nOutputs: {part(d['outputs'])}\n"
+                f"Used by the app as: {', '.join(d['roles']) or 'nothing in particular'}"), True, {}
+
+    async def t_trace_path(self, from_type, to_type):
+        p = await asyncio.to_thread(self._atlas().path, from_type, to_type)
+        if p.get("error"):
+            return p["error"], False, {}
+        if not p["path"]:
+            return f"No path from {from_type} to {to_type} through named cell types.", True, {}
+        steps = "\n".join(f"  {i + 1}. {s['from']} {s['sign']} {s['to']}: {s['synapses']} synapses, "
+                          f"{100 * s['share_of_input']:.1f}% of {s['to']}'s input" for i, s in enumerate(p["path"]))
+        return (f"Strongest path {p['from']} -> {p['to']}: {p['hops']} steps, net {p['net']}. {p['note']}\n{steps}"), True, {}
+
+    async def t_activate_neurons(self, cell_type, seconds=2.0, rate=150.0, record=None):
+        if getattr(self.world, "body", None) is None:
+            return "The body isn't running.", False, {}
+        name, idx = self._atlas().resolve(cell_type)
+        if name is None:
+            return f"No cell type called '{cell_type}'. Try find_neurons.", False, {}
+        seconds = max(0.2, min(float(seconds or 2.0), 5.0))
+        rate = max(1.0, min(float(rate or 150.0), 300.0))
+        w = self.world
+        w.pending.append({"cmd": "channel", "name": "agent_activate", "neurons": [int(i) for i in idx], "rate": rate})
+        t_off = w.brain.t_ms + seconds * 1000.0
+
+        async def switch_off():
+            wall0 = time.time()
+            while w.brain.t_ms < t_off and time.time() - wall0 < 12 * seconds + 10:
+                await asyncio.sleep(0.02)
+            w.pending.append({"cmd": "channel", "name": "agent_activate", "rate": 0})
+        off = asyncio.create_task(switch_off())
+        try:
+            text = await self._watch(seconds + 0.5, record, f"Activated {name} ({len(idx)} neurons, {rate:.0f} Hz, {seconds:g} s)")
+        finally:
+            await off
+        return text, True, {}
+
+    async def t_silence_neurons(self, group=None, restore=False):
+        w = self.world
+        if not group:
+            now = ", ".join(f"{k} ({len(v)} neurons)" for k, v in w.ablated.items()) or "nothing"
+            return (f"Silenced: {now}. Groups: " + "; ".join(f"{k}: {v}" for k, v in w.ABLATIONS.items())
+                    + ". Or any cell type name."), True, {}
+        n = w.ablate(group, on=not restore)
+        if not n:
+            return f"Nothing called '{group}' to {'restore' if restore else 'silence'}.", False, {}
+        return f"{'Restored' if restore else 'Silenced'} {group}: {n} neurons.", True, {}
+
+    async def t_run_benchmark(self, experiments=None, ablate=None, variant="real", repeats=1, label=None):
+        label = re.sub(r"[^\w-]", "_", label or f"run_{time.strftime('%H%M%S')}")[:40]
+        out = BENCH_DIR / f"{label}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        cmd = [sys.executable, str(ROOT / "tools" / "benchmark.py"), "--repeats", str(max(1, min(int(repeats or 1), 3))),
+               "--variant", variant or "real", "--out", str(out)]
+        body = getattr(self.world, "body", None)
+        if body is not None:
+            cmd += ["--body", "physics" if body.phys is not None else "kinematic", "--rhythm", body.rhythm]
+        if experiments:
+            cmd += ["--only", ",".join(experiments)]
+        if ablate:
+            cmd += ["--ablate", ",".join(ablate)]
+        proc = await asyncio.create_subprocess_exec(*cmd, cwd=str(ROOT), stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.STDOUT)
+        try:
+            so, _ = await asyncio.wait_for(proc.communicate(), timeout=1800)
+        except asyncio.TimeoutError:
+            proc.kill()
+            return "The benchmark took over 30 minutes and was stopped. Try fewer experiments.", False, {}
+        text = so.decode(errors="replace")
+        lines = [ln for ln in text.splitlines() if ln.strip() and "Warning" not in ln]
+        return _clip(f"Benchmark run '{label}':\n" + "\n".join(lines)), proc.returncode == 0, {}
+
+    async def t_compare_runs(self, labels=None):
+        runs = {}
+        for f in sorted(BENCH_DIR.glob("*.json")) + sorted(BENCH_DIR.parent.glob("*.json")):
+            runs.setdefault(f.stem, f)
+        if not labels:
+            return ("Saved runs: " + (", ".join(runs) or "none yet")), True, {}
+        data = {}
+        for lb in labels:
+            if lb not in runs:
+                return f"No saved run '{lb}'. Saved: {', '.join(runs)}", False, {}
+            data[lb] = {e["key"]: e for e in json.loads(runs[lb].read_text())["experiments"]}
+        keys = [k for k in dict.fromkeys(k for d in data.values() for k in d)]
+        rows = ["experiment: " + " | ".join(labels)]
+        for k in keys:
+            cells = []
+            for lb in labels:
+                e = data[lb].get(k)
+                cells.append(f"{e['score']:.2f} ({e['measured']})" if e else "-")
+            rows.append(f"{k}: " + " | ".join(cells))
+        return _clip("\n".join(rows)), True, {}
 
     # ------------------------------------------------------------ skills (motor skill cache)
     async def t_list_skills(self):

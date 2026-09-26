@@ -1,6 +1,7 @@
 import * as THREE from './vendor/three.module.min.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import { createFlyView } from './fly.js';
+import { createActivityView } from './activity.js';
 
 // ------------------------------------------------------------------ data
 const [posBuf, metaBuf, meta, meshBuf, meshIdx, presets] = await Promise.all([
@@ -38,7 +39,9 @@ controls.target.set(0, -430, 0);   // whole CNS: brain on top, nerve cord below
 // ---- stage layout: the fly (left) and the brain (right) share the space between the panels
 let viewMode = 'split';
 try { viewMode = localStorage.getItem('flybrain-view') || 'split'; } catch (e) { /* default */ }
-const rects = { brain: null, fly: null };
+const rects = { brain: null, fly: null, act: null };
+const viewAct = document.getElementById('view-activity');
+const activityView = createActivityView(viewAct, { N, onPickType: list => highlightNeurons(list, 8) });
 function stage() {
   const L = document.getElementById('left'), R = document.getElementById('right');
   const x0 = L.getBoundingClientRect().right + 10, x1 = R.getBoundingClientRect().left - 10;
@@ -46,18 +49,24 @@ function stage() {
 }
 function layout() {
   const s = stage();
+  rects.act = null;
   if (viewMode === 'brain') { rects.brain = { ...s }; rects.fly = null; }
   else if (viewMode === 'fly') { rects.fly = { ...s }; rects.brain = null; }
-  else if (s.w / s.h > 1.25) {
-    const w = Math.floor(s.w / 2) - 4;
-    rects.fly = { x: s.x, y: s.y, w, h: s.h };
-    rects.brain = { x: s.x + w + 8, y: s.y, w, h: s.h };
-  } else {
-    const h = Math.floor(s.h / 2) - 4;
-    rects.fly = { x: s.x, y: s.y, w: s.w, h };
-    rects.brain = { x: s.x, y: s.y + h + 8, w: s.w, h };
+  else {
+    // split: the fly beside (or above) the brain, or beside the activity view
+    const other = viewMode === 'activity' ? 'act' : 'brain';
+    if (other === 'act') rects.brain = null;
+    if (s.w / s.h > 1.25) {
+      const w = Math.floor(s.w / 2) - 4;
+      rects.fly = { x: s.x, y: s.y, w, h: s.h };
+      rects[other] = { x: s.x + w + 8, y: s.y, w, h: s.h };
+    } else {
+      const h = Math.floor(s.h / 2) - 4;
+      rects.fly = { x: s.x, y: s.y, w: s.w, h };
+      rects[other] = { x: s.x, y: s.y + h + 8, w: s.w, h };
+    }
   }
-  for (const [el, r] of [[viewBrain, rects.brain], [viewFly, rects.fly]]) {
+  for (const [el, r] of [[viewBrain, rects.brain], [viewFly, rects.fly], [viewAct, rects.act]]) {
     el.hidden = !r;
     if (r) Object.assign(el.style, { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px' });
   }
@@ -78,6 +87,9 @@ function layout() {
   // the "why" card sits over the brain whenever the brain is on screen, where its pathway lights up
   const card = document.getElementById('decision'), home = rects.brain ? viewBrain : viewFly;
   if (card.parentElement !== home) home.append(card);
+  // over the fly, keep the card clear of the experiment buttons
+  card.style.maxHeight = home === viewFly && rects.fly
+    ? Math.max(90, rects.fly.h - (viewFly.querySelector('.experiments').offsetHeight || 0) - 40) + 'px' : '';
   document.querySelectorAll('.viewmode [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === viewMode));
 }
 function resize() {
@@ -222,6 +234,7 @@ function onSpikes(buf) {
     activity[i] = Math.min(activity[i] + 0.55, 1.5);
   }
   document.getElementById('t-sim').textContent = (t / 1000).toFixed(1) + ' s';
+  activityView.onSpikes(t, idx);
 }
 
 // ------------------------------------------------------------------ UI: senses
@@ -457,8 +470,35 @@ async function select(i) {
       <button class="btn ${d.stimulated ? 'primary' : ''}" id="insp-stim">${d.stimulated ? 'Stimulating' : 'Stimulate'}</button>
       <button class="btn danger ${d.blocked ? 'on' : ''}" id="insp-block">${d.blocked ? 'Silenced' : 'Silence'}</button>
     </div>
+    <div id="insp-type" class="insp-type"></div>
+    <form id="insp-path" class="insp-path"><input placeholder="strongest path to… (a cell type)" autocomplete="off"></form>
+    <div id="insp-path-out"></div>
     <h4>Strongest outputs <span style="color:#ffb35c">●</span></h4><div id="insp-out"></div>
     <h4>Strongest inputs <span style="color:#6fb6ff">●</span></h4><div id="insp-in"></div>`;
+  if (d.type && d.type !== '(unnamed)') {
+    fetch('api/typeinfo/' + encodeURIComponent(d.type)).then(r => r.ok ? r.json() : null).then(t => {
+      const el = document.getElementById('insp-type');
+      if (!t || !el || selected !== i) return;
+      const top = (xs) => xs.slice(0, 4).map(x => `${esc(x.type)} <span class="m">${x.sign === 'inhibits' ? '−' : '+'}${x.synapses}</span>`).join(', ');
+      el.innerHTML = `<div><b>${esc(t.type)}</b>: ${t.n} neuron${t.n > 1 ? 's' : ''} · ${esc(t.transmitter || '?')} · now ${t.hz_now} Hz (max ${t.hz_max})</div>`
+        + (t.roles.length ? `<div class="m">${t.roles.map(esc).join(' · ')}</div>` : '')
+        + `<div class="m">type's inputs: ${top(t.inputs)}</div><div class="m">type's outputs: ${top(t.outputs)}</div>`
+        + `<button class="btn" id="insp-find">Show all ${t.n}</button>`;
+      el.querySelector('#insp-find').onclick = () => fetch('api/type/' + encodeURIComponent(t.type)).then(r => r.json()).then(x => highlightNeurons(x.neurons, 8));
+    });
+  }
+  insp.querySelector('#insp-path').onsubmit = async ev => {
+    ev.preventDefault();
+    const to = ev.target.querySelector('input').value.trim();
+    const out = document.getElementById('insp-path-out');
+    if (!to || !d.type) return;
+    out.textContent = 'tracing…';
+    const p = await fetch(`api/path?src=${encodeURIComponent(d.type)}&dst=${encodeURIComponent(to)}`).then(r => r.json()).catch(() => ({ error: 'failed' }));
+    if (p.error) { out.textContent = p.error; return; }
+    out.innerHTML = p.path.length ? `<div class="m">${p.hops} step${p.hops > 1 ? 's' : ''}, net ${esc(p.net)} ${esc(p.note || '')}</div>`
+      + p.path.map(x => `<div class="partner"><span class="t">${esc(x.from)} → ${esc(x.to)}</span><span class="r">${x.sign === 'inhibits' ? '−' : '+'}${x.synapses} · ${(100 * x.share_of_input).toFixed(1)}%</span></div>`).join('')
+      : 'no path through named cell types';
+  };
   insp.querySelector('.close').onclick = () => { insp.hidden = true; selMarker.visible = false; links.visible = false; selected = -1; };
   let stim = d.stimulated, blk = d.blocked;
   const sb = insp.querySelector('#insp-stim'), bb = insp.querySelector('#insp-block');
@@ -508,7 +548,7 @@ createFlyView(viewFly).then(v => { flyView = v; layout(); }).catch(e => console.
 const flyMode = document.getElementById('fly-mode');
 const flySenses = document.getElementById('fly-senses');
 const MODE_TEXT = {
-  rest: 'Resting', legs: 'Moving its legs', groom: 'Grooming its antennae', feed: 'Feeding: proboscis extended',
+  rest: 'Resting', legs: 'Moving its legs', walk: 'Walking', groom: 'Grooming its antennae', feed: 'Feeding: proboscis extended',
   jump: 'Escape jump!', fly: 'Flying', skill: 'Skill', reflex: 'Moving',
 };
 const REFLEX_TEXT = {
@@ -537,20 +577,21 @@ function onBody(b) {
   flyMode.className = 'mode-badge ' + (sk ? (sk.kind === 'reflex' ? (sk.name.startsWith('groom') ? 'groom' : 'legs') : 'skill') : b.mode);
   const s = b.senses || {};
   const bits = [];
-  if (s.loom_left || s.loom_right) bits.push(`👁 looming ${s.loom_left ? 'left' : 'right'} eye · LPLC2 ${Math.max(s.loom_left || 0, s.loom_right || 0)} Hz`);
-  if (s.sugar) bits.push(`sugar taste · ${s.sugar} Hz`);
-  if (s.bitter) bits.push(`bitter taste · ${s.bitter} Hz`);
-  if (s.touch) bits.push(`antenna touch · ${s.touch} Hz`);
-  for (const a of b.active || []) bits.push(`activating ${a.toUpperCase()}`);
+  const felt = Object.keys(s);
+  if (felt.length) bits.push('senses: ' + felt.slice(0, 5).join(', '));
+  for (const a of b.active || []) bits.push(a === 'reward' || a === 'punish' ? `${a === 'reward' ? 'rewarding (PAM)' : 'punishing (PPL1)'}` : `activating ${a.toUpperCase()}`);
+  const mem = Object.entries((b.memory || {}).odours || {})
+    .map(([od, m]) => [od, m.aversive, m.appetitive]).filter(([, av, ap]) => Math.max(av, ap) > 0.05);
+  if (mem.length) bits.push('memory: ' + mem.map(([od, av, ap]) => av >= ap ? `${od} avoid ${Math.round(av * 100)}%` : `${od} seek ${Math.round(ap * 100)}%`).join(', '));
   const ph = b.physics || {};
   if (ph.on) {
     const feet = Object.values(ph.touch || {}).filter(Boolean).length;
-    // the ball's speed changes within every step: show a ~0.5 s average, like a ball tracker's readout
+    // speed changes within every step: show a ~0.5 s average, like a tracker's readout
     const [f0, t0] = b.ball || [0, 0];
     ballAvg[0] += (f0 - ballAvg[0]) * 0.07;
     ballAvg[1] += (t0 - ballAvg[1]) * 0.07;
     const [fwd, turn] = ballAvg;
-    bits.push(`${feet}/6 feet on the ball · ball ${fwd >= 0 ? '+' : ''}${fwd.toFixed(1)} mm/s${Math.abs(turn) > 0.1 ? `, turning ${turn > 0 ? 'right' : 'left'} ${Math.abs(turn).toFixed(1)} rad/s` : ''}`);
+    bits.push(`${feet}/6 feet down · ${fwd >= 0 ? '+' : ''}${fwd.toFixed(1)} mm/s${Math.abs(turn) > 0.1 ? `, turning ${turn > 0 ? 'right' : 'left'} ${Math.abs(turn).toFixed(1)} rad/s` : ''}`);
   }
   flySenses.textContent = bits.join('   ·   ');
   setBodyOpts(ph);
@@ -571,7 +612,7 @@ function onBody(b) {
 // keep the fly camera's orbit controls from capturing clicks meant for the overlays
 for (const el of viewFly.querySelectorAll('.experiments, .decision, .fly-hud'))
   for (const t of ['pointerdown', 'wheel']) el.addEventListener(t, e => e.stopPropagation());
-document.querySelectorAll('[data-exp]').forEach(btn => btn.onclick = () => send({ cmd: 'body', action: btn.dataset.exp, side: btn.dataset.side }));
+document.querySelectorAll('[data-exp]').forEach(btn => btn.onclick = () => send({ cmd: 'body', action: btn.dataset.exp, side: btn.dataset.side, home: !!btn.dataset.home }));
 // body options: physics, leg feedback, built-in rhythms
 const bodyBtns = Object.fromEntries([...document.querySelectorAll('[data-body]')].map(b => [b.dataset.body, b]));
 let bodyOpts = {};
@@ -582,11 +623,17 @@ function setBodyOpts(ph) {
   if (!ph.available) bodyBtns.physics.title = 'Needs the mujoco package (installed with the app); running the kinematic body';
   bodyBtns.feedback.classList.toggle('on', !!ph.on && ph.feedback > 0);
   bodyBtns.feedback.disabled = !ph.on;
-  bodyBtns.rhythms.classList.toggle('on', !!ph.rhythms);
+  const mode = ph.rhythm || (ph.rhythms ? 'replay' : 'off');
+  bodyBtns.rhythm.textContent = `Rhythm: ${mode}`;
+  bodyBtns.rhythm.classList.toggle('on', mode !== 'off');
 }
 bodyBtns.physics.onclick = () => send({ cmd: 'body', action: 'physics', on: !bodyOpts.on });
 bodyBtns.feedback.onclick = () => send({ cmd: 'body', action: 'feedback', gain: bodyOpts.feedback > 0 ? 0 : 1 });
-bodyBtns.rhythms.onclick = () => send({ cmd: 'body', action: 'rhythms', on: !bodyOpts.rhythms });
+bodyBtns.rhythm.onclick = () => {
+  const order = ['neurons', 'replay', 'off'];
+  const next = order[(order.indexOf(bodyOpts.rhythm || 'neurons') + 1) % order.length];
+  send({ cmd: 'body', action: 'rhythm', mode: next });
+};
 let demoTimers = [];
 const demoBtn = document.getElementById('demo');
 function stopDemo() {
@@ -602,9 +649,9 @@ demoBtn.onclick = () => {
     send({ cmd: 'skill', action: 'stop' });
     return;
   }
-  const steps = [[0, 'reset'], [600, 'sugar'], [6000, 'loom', 'left'], [10000, 'bitter'], [15000, 'p9'], [18500, 'adn']];
+  const steps = [[0, 'reset'], [300, 'clear'], [600, 'probe_sugar'], [5500, 'fruit'], [9500, 'loom', 'left'], [13000, 'p9'], [16500, 'adn'], [20000, 'stripes', 'left'], [24000, 'clear'], [24300, 'target', 'left']];
   demoTimers = steps.map(([t, action, side]) => setTimeout(() => send({ cmd: 'body', action, side }), t));
-  demoTimers.push(setTimeout(stopDemo, 22000));
+  demoTimers.push(setTimeout(stopDemo, 30000));
   demoBtn.textContent = '■ Stop demo';
   demoBtn.classList.add('running');
 };
@@ -720,6 +767,7 @@ function tick(now) {
   const pulse = 1 + 0.25 * Math.sin(now / 180);
   selMarker.scale.setScalar(pulse);
   controls.update();
+  if (rects.act) activityView.draw();
   if (hlFade > 0) {
     hlFade = Math.max(0, hlFade - dt / 1000);
     const v = Math.min(1, hlFade / 2);

@@ -22,11 +22,13 @@
     <button data-view="split" class="on">Fly + brain</button>
     <button data-view="fly">Fly</button>
     <button data-view="brain">Brain</button>
+    <button data-view="activity" title="Spike raster and firing rates, from the senses to the motor neurons">Fly + activity</button>
   </div>
   <div id="conn" class="conn off">connecting…</div>
 </header>
 
 <div id="view-brain" class="view"></div>
+<div id="view-activity" class="view" hidden></div>
 <div id="view-fly" class="view">
   <div class="fly-hud">
     <div id="fly-mode" class="mode-badge">Resting</div>
@@ -34,15 +36,37 @@
   </div>
   <div id="decision" class="decision" hidden></div>
   <div class="experiments">
-    <div class="exp-group"><span>Show it</span>
-      <button data-exp="loom" data-side="left" title="A dark object swoops in from the left">Threat ◀</button>
-      <button data-exp="loom" data-side="right" title="A dark object swoops in from the right">Threat ▶</button>
-      <button data-exp="sugar" title="Touch a sugar drop to the proboscis">Sugar</button>
-      <button data-exp="bitter" title="Touch a bitter drop to the proboscis">Bitter</button>
-      <button data-exp="dust" title="Dust on the antennae">Dust</button>
-      <button id="demo" title="Run all of them in sequence">▶ Demo</button>
+    <div class="exp-group" title="Put something in the fly's world, near it. It senses it from where it is: each antenna smells its own side, each eye sees its own side, each foot tastes what it stands on."><span>Put in the world</span>
+      <button data-exp="loom" data-side="left" title="A dark object swoops at the fly from its left">Threat ◀</button>
+      <button data-exp="loom" data-side="right" title="A dark object swoops at the fly from its right">Threat ▶</button>
+      <button data-exp="target" data-side="left" title="A small dark fly-sized object darting back and forth ahead-left (small-object detectors LC10a)">Target ◀</button>
+      <button data-exp="target" data-side="right" title="The same ahead-right">Target ▶</button>
+      <button data-exp="sugar" title="A sugar drop just in front of its front feet">Sugar drop</button>
+      <button data-exp="bitter" title="A bitter drop just in front of its front feet">Bitter drop</button>
+      <button data-exp="fruit" title="Ripe fruit smell (Or42b, Or22a, Or59b receptors) from a source ahead">Fruit smell</button>
+      <button data-exp="co2" title="Carbon dioxide, a stress odour (Gr21a/Gr63a)">CO₂</button>
+      <button data-exp="geosmin" title="Geosmin, the smell of harmful mould (Or56a)">Geosmin</button>
+      <button data-exp="heat" title="A warm patch of air (hot cells in the arista)">Warm</button>
+      <button data-exp="cold" title="A cool patch of air (cold cells in the arista)">Cool</button>
+      <button data-exp="humid" title="Moist air (hygrosensory neurons)">Humid</button>
+      <button data-exp="dry" title="Dry air">Dry</button>
+      <button data-exp="stripes" data-side="left" title="A striped drum turning to the left around the arena (motion detectors T4/T5)">Stripes ⟲</button>
+      <button data-exp="stripes" data-side="right" title="A striped drum turning to the right">Stripes ⟳</button>
+      <button data-exp="clear" title="Take everything out of the world">Clear</button>
     </div>
-    <div class="exp-group" title="Drives these descending (command) neurons directly, like optogenetics. Walking, turning and grooming use the built-in skills as their rhythm; the jump is the giant fibre's own pathway."><span>Activate neurons</span>
+    <div class="exp-group"><span>Do to it</span>
+      <button data-exp="probe_sugar" title="Touch a sugar drop to the proboscis">Sugar to mouth</button>
+      <button data-exp="probe_bitter" title="Touch a bitter drop to the proboscis">Bitter to mouth</button>
+      <button data-exp="dust" title="Dust on the antennae">Dust</button>
+      <button data-exp="reset" data-home="1" title="Put the fly back in the middle of the arena">Re-centre</button>
+      <button id="demo" title="Run a sequence of these">▶ Demo</button>
+    </div>
+    <div class="exp-group" title="Learning in the mushroom body. Put an odour in the world, then reward or punish while the fly smells it: dopamine neurons weaken the synapses from that odour's Kenyon cells onto the output neurons they gate, and the next time it smells the odour, its brain responds differently."><span>Teach it</span>
+      <button data-exp="reward" title="Activate the PAM dopamine neurons for 1 s (reward, like sugar)">Reward</button>
+      <button data-exp="punish" title="Activate the PPL1 dopamine neurons for 1 s (punishment, like a shock)">Punish</button>
+      <button data-exp="forget" title="Restore every learned synapse to its connectome strength">Forget</button>
+    </div>
+    <div class="exp-group" title="Drives these descending (command) neurons directly, like optogenetics. What the body does next is up to the connectome and the leg rhythm setting below."><span>Activate neurons</span>
       <button data-exp="p9">P9 · walk</button>
       <button data-exp="mdn">MDN · back up</button>
       <button data-exp="dna02_l">DNa02 L · turn</button>
@@ -53,7 +77,7 @@
     <div class="exp-group" id="body-opts"><span>Body</span>
       <button data-body="physics" title="Physical body: gravity, contacts and a real ball (MuJoCo). Off = joint angles straight from the muscles.">Physics</button>
       <button data-body="feedback" title="The legs' sense organs (chordotonal organs, hair plates, campaniform sensilla, tarsal bristles) report joint angles, movement and load back into the nerve cord">Leg feedback</button>
-      <button data-body="rhythms" title="Built-in walking, turning and grooming rhythms, played when the brain's command neurons for them fire. Off = only what the connectome does by itself.">Rhythms</button>
+      <button data-body="rhythm" title="Where the leg rhythm comes from when the brain's command neurons fire. Neurons: the nerve cord's own premotor neurons, as rhythm generators. Replay: a stored drive pattern made from a real fly's steps. Off: only what the connectome does by itself. Click to cycle.">Rhythm: neurons</button>
     </div>
   </div>
 </div>

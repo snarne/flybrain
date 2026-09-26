@@ -26,7 +26,7 @@ export async function createFlyView(dom) {
   controls.target.set(-0.4, 0, 0.9);
   controls.enableDamping = true;
   controls.minDistance = 3;
-  controls.maxDistance = 40;
+  controls.maxDistance = 120;
 
   scene.add(new THREE.HemisphereLight(0xcfd8ff, 0x201810, 1.1));
   const key = new THREE.DirectionalLight(0xffffff, 2.2);
@@ -36,30 +36,117 @@ export async function createFlyView(dom) {
   rim.position.set(-8, -4, 3);
   scene.add(rim);
 
-  // ---------------------------------------------------------------- the rig: ball and cup
-  const ballR = 4.5;
-  const tex = (() => {
+  // ---------------------------------------------------------------- the arena: floor, walls, stripes
+  const ARENA = 40;                                  // half-width (mm), as server/physics.py
+  const floorTex = (() => {
     const c = document.createElement('canvas');
-    c.width = 512; c.height = 256;
+    c.width = c.height = 512;
     const g = c.getContext('2d');
-    for (let i = 0; i < 16; i++) for (let j = 0; j < 8; j++) {
-      g.fillStyle = (i + j) % 2 ? '#2a3140' : '#3a4356';
-      g.fillRect(i * 32, j * 32, 32, 32);
+    g.fillStyle = '#1b2029';
+    g.fillRect(0, 0, 512, 512);
+    g.strokeStyle = '#2a3140';
+    g.lineWidth = 2;
+    for (let i = 0; i <= 512; i += 32) {           // 1 mm grid (texture repeats every 16 mm)
+      g.beginPath(); g.moveTo(i, 0); g.lineTo(i, 512); g.stroke();
+      g.beginPath(); g.moveTo(0, i); g.lineTo(512, i); g.stroke();
     }
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(2 * ARENA / 16, 2 * ARENA / 16);
+    t.anisotropy = 4;
+    return t;
+  })();
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(2 * ARENA, 2 * ARENA), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.95 }));
+  scene.add(floor);
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x2b3240, roughness: 0.8, transparent: true, opacity: 0.55 });
+  for (const [x, y, w, h] of [[0, ARENA, 2 * ARENA, 0.4], [0, -ARENA, 2 * ARENA, 0.4], [ARENA, 0, 0.4, 2 * ARENA], [-ARENA, 0, 0.4, 2 * ARENA]]) {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, 3), wallMat);
+    wall.position.set(x, y, 1.5);
+    scene.add(wall);
+  }
+  // a striped drum around the arena, shown while the stripes turn
+  const stripeTex = (() => {
+    const c = document.createElement('canvas');
+    c.width = 1024; c.height = 8;
+    const g = c.getContext('2d');
+    for (let i = 0; i < 24; i++) { g.fillStyle = i % 2 ? '#0c0e12' : '#d8dde8'; g.fillRect(i * 1024 / 24, 0, 1024 / 24, 8); }
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
   })();
-  const ballPivot = new THREE.Group();
-  ballPivot.position.set(-0.45, 0, -ballR + 0.02);
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(ballR, 48, 32), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 }));
-  ballPivot.add(ball);
-  scene.add(ballPivot);
-  const cup = new THREE.Mesh(new THREE.CylinderGeometry(3.8, 2.6, 3.2, 40, 1, true),
-    new THREE.MeshStandardMaterial({ color: 0x3b4150, metalness: 0.6, roughness: 0.35, side: THREE.DoubleSide }));
-  cup.rotation.x = Math.PI / 2;
-  cup.position.set(-0.45, 0, -ballR - 2.2);
-  scene.add(cup);
+  const drum = new THREE.Mesh(new THREE.CylinderGeometry(ARENA * 1.2, ARENA * 1.2, 30, 96, 1, true),
+    new THREE.MeshBasicMaterial({ map: stripeTex, side: THREE.BackSide, transparent: true, opacity: 0.9 }));
+  drum.rotation.x = Math.PI / 2;
+  drum.position.z = 10;
+  drum.visible = false;
+  scene.add(drum);
+  // things in the world, drawn from the server's arena (server/arena.py)
+  const worldGroup = new THREE.Group();
+  scene.add(worldGroup);
+  const worldObjs = new Map();
+  const ODOUR_COL = { fruit: 0xffa040, co2: 0x9aa4b2, geosmin: 0x7a8a3a, cva: 0xff7ab8 };
+  const ZONE_COL = { heat: 0xff4d3a, cold: 0x3a8cff, humid: 0x3ad6d0, dry: 0xd8b060 };
+  function radialTexture(hex) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const g = c.getContext('2d');
+    const col = new THREE.Color(hex);
+    const rgb = `${Math.round(col.r * 255)},${Math.round(col.g * 255)},${Math.round(col.b * 255)}`;
+    const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gr.addColorStop(0, `rgba(${rgb},0.55)`);
+    gr.addColorStop(0.6, `rgba(${rgb},0.18)`);
+    gr.addColorStop(1, `rgba(${rgb},0)`);
+    g.fillStyle = gr;
+    g.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(c);
+  }
+  function makeObj(o) {
+    const g = new THREE.Group();
+    if (o.kind === 'sugar' || o.kind === 'bitter') {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2),
+        new THREE.MeshPhysicalMaterial({ color: o.kind === 'sugar' ? 0xffc050 : 0x9b6bff, roughness: 0.05, transmission: 0.3, transparent: true, opacity: 0.85 }));
+      m.rotation.x = Math.PI / 2;
+      m.scale.set(1, 0.35, 1);
+      g.add(m);
+      g.userData.drop = m;
+    } else if (o.kind === 'odour') {
+      const plume = new THREE.Mesh(new THREE.CircleGeometry(2.2 * o.spread, 64),
+        new THREE.MeshBasicMaterial({ map: radialTexture(ODOUR_COL[o.odour] || 0xffffff), transparent: true, depthWrite: false }));
+      plume.position.z = 0.02;
+      const vial = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 1.6, 24),
+        new THREE.MeshStandardMaterial({ color: ODOUR_COL[o.odour] || 0xffffff, roughness: 0.3, metalness: 0.1 }));
+      vial.rotation.x = Math.PI / 2;
+      vial.position.z = 0.8;
+      g.add(plume, vial);
+    } else if (ZONE_COL[o.kind]) {
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(o.r + 1.5, 64),
+        new THREE.MeshBasicMaterial({ map: radialTexture(ZONE_COL[o.kind]), transparent: true, depthWrite: false }));
+      disc.position.z = 0.01;
+      g.add(disc);
+    } else if (o.kind === 'target') {
+      const m = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), new THREE.MeshStandardMaterial({ color: 0x14100c, roughness: 0.7 }));
+      m.scale.set(o.r * 1.6, o.r, o.r * 0.8);
+      g.add(m);
+    } else if (o.kind === 'threat') {
+      g.add(new THREE.Mesh(new THREE.SphereGeometry(o.r, 32, 20), new THREE.MeshStandardMaterial({ color: 0x050608, roughness: 0.9 })));
+    }
+    worldGroup.add(g);
+    return g;
+  }
+  function syncWorld(A) {
+    const seen = new Set();
+    for (const o of A?.objects || []) {
+      seen.add(o.id);
+      let g = worldObjs.get(o.id);
+      if (!g) { g = makeObj(o); worldObjs.set(o.id, g); }
+      g.position.set(o.x, o.y, o.kind === 'threat' || o.kind === 'target' ? o.z : 0);
+      if (g.userData.drop) g.userData.drop.scale.set(o.r, 0.35 * o.r, o.r);
+    }
+    for (const [id, g] of worldObjs) if (!seen.has(id)) { worldGroup.remove(g); worldObjs.delete(id); }
+    drum.visible = !!A?.stripes;
+    if (A?.stripes) drum.rotation.y = A.stripe_angle;
+  }
 
   // ---------------------------------------------------------------- the fly
   const fly = new THREE.Group();
@@ -148,9 +235,6 @@ export async function createFlyView(dom) {
   const X = new THREE.Vector3(1, 0, 0), Y = new THREE.Vector3(0, 1, 0), Z = new THREE.Vector3(0, 0, 1);
 
   // ---------------------------------------------------------------- stimuli props
-  const loomObj = new THREE.Mesh(new THREE.SphereGeometry(3, 32, 20), new THREE.MeshStandardMaterial({ color: 0x050608, roughness: 0.9 }));
-  loomObj.visible = false;
-  scene.add(loomObj);
   const probe = new THREE.Group();
   const needle = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 6, 8), new THREE.MeshStandardMaterial({ color: 0xbfc6d4, metalness: 0.9, roughness: 0.25 }));
   needle.rotation.z = Math.PI / 2;
@@ -170,8 +254,8 @@ export async function createFlyView(dom) {
   const dustSeed = Array.from({ length: dustN }, () => [Math.random(), Math.random(), Math.random()]);
 
   // ---------------------------------------------------------------- state from the server
-  let st = { mode: 'rest', joints: null, parts: {}, ball: [0, 0], loom: null, probe: null, dust: false };
-  let t = 0, wingPhase = 0;
+  let st = { mode: 'rest', joints: null, parts: {}, ball: [0, 0], probe: null, dust: false, fly: null, arena: null };
+  let t = 0, wingPhase = 0, flyPlaced = false;
   const cur = {};   // smoothed joint offsets
   function onBody(s) { st = s; }
 
@@ -221,7 +305,7 @@ export async function createFlyView(dom) {
     // wings: posture from the steering/posture muscles, beat from the power muscles
     const W = J?.wings || { L: {}, R: {} };
     const power = sm('power', W.L?.power || 0, Math.min(1, dt * 6));
-    const beating = !!st.airborne && power > 0.12;   // feet on the ball inhibit flight (tarsal reflex)
+    const beating = !!st.airborne && power > 0.12;   // feet on the ground inhibit flight (tarsal reflex)
     wingPhase += dt * 2 * Math.PI * (beating ? 7 + 5 * Math.min(1, power) : 0);   // shown ~25x slower than 200 Hz
     for (const side of ['L', 'R']) {
       const w = W[side] || {};
@@ -285,30 +369,25 @@ export async function createFlyView(dom) {
       }
     }
 
-    // ball turns under walking legs
-    const ball_ = st.ball || [0, 0];
-    // Roll the ball in the fly's own frame (it faces +x, head forward): walking forwards rolls the ball's
-    // top backwards (about the fly's side-to-side axis), backwards the other way, and turning spins it
-    // about the vertical. Rotations are applied about these fixed axes every frame, so they stay tied to
-    // the fly's heading however far the ball has already turned.
-    if (P.on && P.ball_q) {
-      // physical body: the ball is where MuJoCo has it, turned exactly as the feet turned it
-      ballPivot.position.z = P.ball_z;
-      cup.position.z = P.ball_z - 2.22;
-      ball.quaternion.set(P.ball_q[1], P.ball_q[2], P.ball_q[3], P.ball_q[0]);
-    } else {
-      ballPivot.position.z = -ballR + 0.02;
-      cup.position.z = -ballR - 2.2;
-      ball.quaternion.premultiply(qRoll.setFromAxisAngle(Y, -(ball_[0] / ballR) * dt));
-      ball.quaternion.premultiply(qRoll.setFromAxisAngle(Z, ball_[1] * dt * 0.6));
+    // where the fly is: its root body's position and orientation from the physics (or the kinematic
+    // body's walk across the floor); the camera follows it
+    const pose = st.fly;
+    if (pose?.pos) {
+      const [x, y, z] = pose.pos;
+      const target = new THREE.Vector3(x, y, z ?? 0);
+      if (!flyPlaced || target.distanceTo(fly.position) > 20) { fly.position.copy(target); flyPlaced = true; }
+      else fly.position.lerp(target, Math.min(1, dt * 20));
+      const q = pose.quat;
+      fly.quaternion.slerp(new THREE.Quaternion(q[1], q[2], q[3], q[0]), Math.min(1, dt * 20));
+      const follow = new THREE.Vector3(fly.position.x - 0.4, fly.position.y, Math.max(0.9, fly.position.z + 1.0));
+      const shift = follow.clone().sub(controls.target);
+      controls.target.add(shift);
+      camera.position.add(shift);
     }
+    syncWorld(st.arena);
 
-    // stimuli
-    if (st.loom) {
-      loomObj.visible = true;
-      const sgn = st.loom.side === 'left' ? 1 : -1;
-      loomObj.position.set(0.8, sgn * (st.loom.d + 1.5), 1.2 + st.loom.d * 0.25);
-    } else loomObj.visible = false;
+    // the experimenter's props: a drop on a needle touched to the proboscis, dust on the antennae
+    const h = st.fly?.heading || 0, ch = Math.cos(h), sh = Math.sin(h);
     if (st.probe) {
       probe.visible = true;
       dropMat.color.set(st.probe.kind === 'sugar' ? 0xffb640 : 0x9b6bff);
@@ -316,7 +395,9 @@ export async function createFlyView(dom) {
       (nodes.Haustellum || nodes.Head).getWorldPosition(tip);
       const pt = st.probe.t;
       const approach = pt < 0.35 ? 1 - pt / 0.35 : pt > 4.2 ? Math.min(1, (pt - 4.2) / 0.4) : 0;
-      probe.position.set(tip.x + 0.35 + 2.5 * approach, tip.y, tip.z - 0.25);
+      const d = 0.35 + 2.5 * approach;
+      probe.position.set(tip.x + d * ch, tip.y + d * sh, tip.z - 0.25);
+      probe.rotation.z = h;
     } else probe.visible = false;
     dust.visible = !!st.dust;
     if (st.dust) {
@@ -324,8 +405,9 @@ export async function createFlyView(dom) {
       nodes.Head.getWorldPosition(head);
       dustSeed.forEach(([a, b, c], i) => {
         const r = 0.3 + 0.7 * ((a + t * 0.3) % 1);
-        dustPos[i * 3] = head.x + 0.4 + r * Math.cos(b * 6.28 + t);
-        dustPos[i * 3 + 1] = head.y + (c - 0.5) * 1.2;
+        const fx = 0.4 + r * Math.cos(b * 6.28 + t), fy = (c - 0.5) * 1.2;
+        dustPos[i * 3] = head.x + fx * ch - fy * sh;
+        dustPos[i * 3 + 1] = head.y + fx * sh + fy * ch;
         dustPos[i * 3 + 2] = head.z + 0.25 + r * Math.sin(b * 6.28 + t) * 0.5;
       });
       dustGeo.attributes.position.needsUpdate = true;
