@@ -25,7 +25,7 @@ import time
 import urllib.parse
 import urllib.request
 
-FLYLAB_VERSION = "1"
+FLYLAB_VERSION = "2"
 URL = os.environ.get("FLYBRAIN_URL", "http://127.0.0.1:" + os.environ.get("PORT", "8765"))
 
 
@@ -121,6 +121,11 @@ def refine(name, goal=None, trials=None, keyframes=None, duration=None, baseline
     return post("/api/skills/learn", {"name": name, "refine": True, "goal": goal, "trials": trials,
                                       "keyframes": keyframes, "duration": duration, "baseline": baseline,
                                       "assists": assists})
+
+
+def combine(name, description, steps):
+    """A sequence of skills under one name: steps=[{"skill": "walk_forward", "repeat": 4}, {"skill": "hop"}]."""
+    return post("/api/skills/combine", {"name": name, "description": description, "steps": steps})
 
 
 # ---------------------------------------------------------------- the live fly (changes what it's doing)

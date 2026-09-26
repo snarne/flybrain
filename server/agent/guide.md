@@ -84,6 +84,11 @@ Measured on this model (about 1 s of movement, 40 tries, walking model off unles
 - a jump (LM.jump + RM.jump with the middle legs pressing down): 13.5 mm high, 16.4 mm after practice,
   landing on its feet without flying off.
 
+Chains: learn the parts once, then combine_skills(name, description, steps=[{"skill": "walk_forward", "repeat": 4},
+{"skill": "hop"}]); do_skills plays it (repeats of a walking skill run as one continuous walk).
+Improving: refine_skill the skill you have (it continues from what it learned, and the old version competes, so it
+can't get worse). Don't start new versions from scratch under names like _v2: each starts again from nothing.
+
 Good habits: one skill per reusable unit; say which hand-built parts were on when you compare numbers; the model is
 noisy, so trust means over several runs, not one.
 
@@ -108,6 +113,7 @@ For analysis in code, your workspace has flylab.py (installed by the app; plain 
     fl.test("walk_forward", assists={"walking": False}, runs=3)       # background copy, the live fly isn't touched
     fl.learn(name, description, keyframes, goal="forward", trials=40, baseline="walk_forward")
     fl.refine(name, goal=..., trials=...)
+    fl.combine("walk_then_hop", "walk then jump", [{"skill": "walk_forward", "repeat": 4}, {"skill": "hop"}])
     fl.do(["name"]); fl.activate("DNp09", seconds=2); fl.watch(2.0); fl.set_parts(walking=False); fl.reset()
     fl.command({...})                     # any app command (see below)
 

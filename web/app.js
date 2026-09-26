@@ -382,6 +382,7 @@ ablateBtns.forEach(b => b.onclick = () => send({ cmd: 'ablate', group: b.dataset
 function onStatus(s) {
   ablated = s.ablated || [];
   ablateBtns.forEach(b => b.classList.toggle('on', ablated.includes(b.dataset.ablate)));
+  document.getElementById('restart-code').hidden = !s.code_changed;
   const achieved = Math.min(s.speed, s.sim_ratio);
   document.getElementById('t-ratio').textContent = achieved >= s.speed * 0.95 ? `${s.speed}× real time` : `${achieved.toFixed(2)}× real time (CPU-limited)`;
   document.getElementById('t-firing').textContent = `${s.firing.toLocaleString()} neurons firing`;
@@ -724,9 +725,9 @@ function renderSkills(list) {
     const d = document.createElement('div');
     d.className = 'skill-item';
     const got = s.metrics ? metricsBrief(s.metrics) : '';
-    const what = s.command ? ' · via command neurons + walking model'
+    const what = s.sequence ? ` · ${esc(s.sequence.join(' → '))}` : s.command ? ' · via command neurons + walking model'
       : s.goal ? ` · goal: ${esc(s.goal)} · ${esc(got)}` : ` · followed the plan ${(s.score ?? 0).toFixed(2)}${got ? ' · ' + esc(got) : ''}`;
-    d.innerHTML = `<div class="grow"><div class="t">${esc(s.name.replace(/_/g, ' '))}${s.builtin ? ' <span class="tag">built in</span>' : ''}</div><div class="m">${esc(s.description)}${what}${s.command ? '' : ` · via ${esc(s.levels.join(', '))}`}${s.uses ? ` · used ${s.uses}×` : ''}</div></div>
+    d.innerHTML = `<div class="grow"><div class="t">${esc(s.name.replace(/_/g, ' '))}${s.builtin ? ' <span class="tag">built in</span>' : ''}</div><div class="m">${esc(s.description)}${what}${s.command || s.sequence ? '' : ` · via ${esc(s.levels.join(', '))}`}${s.uses ? ` · used ${s.uses}×` : ''}</div></div>
       <button class="btn" title="Do it">▶</button>${s.builtin ? '' : '<button class="link" title="Forget this skill">×</button>'}`;
     const [play, forget] = d.querySelectorAll('button');
     play.onclick = () => send({ cmd: 'skill', action: 'play', name: s.name });
@@ -876,3 +877,10 @@ function tick(now) {
 }
 requestAnimationFrame(tick);
 window.flybrain = { send, select, camera, controls, highlightNeurons };
+
+// the app's code changed on disk (an update): restart it to use it (run.sh / run.bat start it again)
+document.getElementById('restart-code').onclick = ev => {
+  ev.target.disabled = true;
+  ev.target.textContent = 'Restarting…';
+  fetch('api/restart', { method: 'POST' }).catch(() => {});
+};

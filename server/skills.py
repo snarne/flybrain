@@ -125,7 +125,9 @@ class SkillEngine:
                      "builtin": builtin, "levels": sorted({d["level"] for d in v.get("drivers", [])}),
                      "command": bool(v.get("command")),
                      "goal": v.get("goal") if isinstance(v.get("goal"), str) else v.get("goal_text"), "tracking": v.get("tracking"),
-                     "metrics": v.get("metrics"), "assists": v.get("assists")}
+                     "metrics": v.get("metrics"), "assists": v.get("assists"),
+                     "sequence": [f"{x['skill']}" + (f" x{x['repeat']}" if x.get("repeat", 1) > 1 else "")
+                                  for x in v.get("sequence", [])] or None}
                     for k, v in sorted(lib.items()) if not (builtin and k in self.lib)]
         return out
 
@@ -753,6 +755,8 @@ class SkillEngine:
         sk = self.get(bname)
         if not sk:
             return {"name": bname, "error": f"no skill called {bname}"}
+        if sk.get("sequence"):
+            return {"name": bname, "error": f"{bname} is a combination of skills; use one of its parts as the baseline"}
         command = bool(sk.get("command"))
         drivers = [dict(d, rates=list(d["rates"])) for d in sk["drivers"]]
         if command:
@@ -780,6 +784,9 @@ class SkillEngine:
         sk = self.get(name)
         if not sk:
             return {"ok": False, "error": f"no skill called {name}", "known": sorted(set(self.lib) | set(self.builtin))}
+        if sk.get("sequence"):
+            return {"ok": False, "error": f"{name} is a combination of skills; test its parts: "
+                                          f"{', '.join(x['skill'] for x in sk['sequence'])}"}
         _, tracks = self.parse_plan(sk["plan"])
         command = bool(sk.get("command"))
         drivers = [dict(d, rates=list(d["rates"])) for d in sk["drivers"]]
@@ -981,6 +988,41 @@ class SkillEngine:
                 "per_control": {k: round(float(v), 2) for k, v in per.items()},
                 "drivers": [self._describe(d) for d in drv], "seconds": round(time.time() - t0, 1)}
 
+    def expand(self, names, _depth=0):
+        """Skill names -> the basic skills to play, in order: combined skills (sequences) opened up."""
+        flat = []
+        for n in names:
+            sk = self.get(n)
+            if sk and sk.get("sequence") and _depth < 5:
+                for step in sk["sequence"]:
+                    flat += self.expand([step["skill"]], _depth + 1) * max(1, int(step.get("repeat", 1)))
+            else:
+                flat.append(n)
+        return flat
+
+    def combine(self, name, description, steps):
+        """Save a sequence of skills under one name, e.g. [{"skill": "walk_forward", "repeat": 4}, {"skill": "hop"}]."""
+        seq = []
+        for st in steps or []:
+            if isinstance(st, str):
+                st = {"skill": st}
+            n, k = str(st.get("skill", "")), max(1, min(int(st.get("repeat", 1) or 1), 20))
+            if n == name:
+                raise ValueError("a combined skill can't contain itself")
+            if not self.get(n):
+                raise ValueError(f"no skill called {n}. Known: {', '.join(sorted(set(self.lib) | set(self.builtin)))}")
+            seq.append({"skill": n, "repeat": k})
+        if not seq:
+            raise ValueError("steps: at least one skill")
+        dur = 0.0
+        for n in self.expand([x["skill"] for x in seq for _ in range(x["repeat"])]):
+            sk = self.get(n)
+            dur += float(sk.get("duration") or (sk.get("plan") or {}).get("duration") or 1.0)
+        self.lib[name] = {"description": description, "sequence": seq, "duration": round(dur, 2), "score": None,
+                          "learned": _now(), "uses": 0, "drivers": []}
+        self._save()
+        return self.lib[name]
+
     async def perform(self, names, repeat=1):
         if self.busy:
             return {"ok": False, "error": "busy with another movement"}
@@ -988,17 +1030,35 @@ class SkillEngine:
         if missing:
             return {"ok": False, "error": f"not learned yet: {missing}. Learn them first.",
                     "known": sorted(set(self.lib) | set(self.builtin))}
+        flat = self.expand(list(names)) * max(1, min(int(repeat or 1), 20))
+        missing = [n for n in flat if not self.get(n)]
+        if missing:
+            return {"ok": False, "error": f"a combined skill uses skills that are gone: {sorted(set(missing))}"}
+        runs = []                                  # the same skill back to back: one run
+        for n in flat:
+            if runs and runs[-1][0] == n:
+                runs[-1][1] += 1
+            else:
+                runs.append([n, 1])
         self.busy = True
         await self._wait_reflex()
         try:
             done = []
-            for _ in range(max(1, min(int(repeat or 1), 20))):
-                for name in names:
-                    sk = self.get(name)
-                    duration, tracks = self.parse_plan(sk["plan"])
-                    duration = float(sk.get("duration") or duration)
-                    drivers = [dict(d, neurons=list(d["neurons"]), rates=list(d["rates"]), level_i=LEVELS.index(d["level"]))
-                               for d in sk["drivers"]]
+            for name, times in runs:
+                sk = self.get(name)
+                duration, tracks = self.parse_plan(sk["plan"])
+                duration = float(sk.get("duration") or duration)
+                drivers = [dict(d, neurons=list(d["neurons"]), rates=list(d["rates"]), level_i=LEVELS.index(d["level"]))
+                           for d in sk["drivers"]]
+                plays = times
+                if sk.get("command") and times > 1:
+                    # a command skill repeated: one long drive, so the fly walks on without stopping in between
+                    n = int(round(duration * times / BIN_S)) + 1
+                    for d in drivers:
+                        r = d["rates"] or [0]
+                        d["rates"] = [r[i % len(r)] for i in range(n)]
+                    duration, plays = duration * times, 1
+                for _ in range(plays):
                     body = getattr(self.w, "body", None)
                     if body is not None and not sk.get("command"):
                         # the hand-built parts as they were when the skill was learned (e.g. no flight timer)
@@ -1009,15 +1069,19 @@ class SkillEngine:
                     finally:
                         if body is not None:
                             body.assist_override = None
+                    b = self.ball_summary(self.result) or {}
+                    label = name + (f" x{times}" if sk.get("command") and times > 1 else "")
                     if sk.get("command"):            # a command skill: what counts is how the fly moved
-                        b = self.ball_summary(self.result) or {}
-                        done.append((name, f"{b.get('forward_mm_s', 0):+.1f} mm/s, turning {b.get('turn_left_rad_s', 0):+.2f} rad/s (+ left)"))
+                        done.append((label, f"{b.get('forward_mm_s', 0):+.1f} mm/s for {duration:.1f} s, turning "
+                                            f"{b.get('turn_left_rad_s', 0):+.2f} rad/s (+ left)"))
                     else:
                         score, *_ = self.evaluate(self.result, tracks, duration)
-                        b = self.ball_summary(self.result) or {}
-                        done.append((name, f"muscles followed the plan {score:.2f}; moved {b.get('forward_mm_s', 0):+.1f} mm/s, "
-                                           f"turning {b.get('turn_left_rad_s', 0):+.2f} rad/s"))
-                    sk["uses"] = sk.get("uses", 0) + 1
+                        done.append((label, f"muscles followed the plan {score:.2f}; moved {b.get('forward_mm_s', 0):+.1f} mm/s, "
+                                            f"turning {b.get('turn_left_rad_s', 0):+.2f} rad/s"))
+                sk["uses"] = sk.get("uses", 0) + times
+            for n in names:
+                if self.get(n) and self.get(n).get("sequence"):
+                    self.get(n)["uses"] = self.get(n).get("uses", 0) + 1
             self._save()
             return {"ok": True, "performed": done}
         finally:

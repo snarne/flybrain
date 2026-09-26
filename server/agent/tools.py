@@ -168,6 +168,13 @@ TOOLS = [
         {"name": {"type": "string"}, "assists": {"type": "object", "description": "e.g. {\"walking\": false}"},
          "goal": {"anyOf": [{"type": "string"}, {"type": "object"}], "description": "as in learn_skill; default the skill's own"}, "runs": {"type": "integer", "description": "1-10, default 3"},
          "duration": {"type": "number", "description": "seconds, for built-in walking/turning (default 2)"}}, ["name"]),
+    _fn("combine_skills", "Save a sequence of skills under one name, e.g. walk forward for 4 s then jump: "
+        "steps=[{\"skill\": \"walk_forward\", \"repeat\": 4}, {\"skill\": \"hop\"}] (walk_forward is 1 s; repeats of a "
+        "walking skill run as one continuous walk). Nothing new is learned: learn the parts first (a jump with "
+        "learn_skill), then combine them; do_skills plays the combination.",
+        {"name": {"type": "string"}, "description": {"type": "string"},
+         "steps": {"type": "array", "items": {"type": "object"}, "description": "[{\"skill\": name, \"repeat\": n}, ...]"}},
+        ["name", "description", "steps"]),
     _fn("do_skills", "Perform learned skills on the live fly body, in order (e.g. to type a word: alternate tap skills, "
         "one per letter). Instant: replays the saved neuron drive, with the hand-built parts as they were when the skill "
         "was learned.",
@@ -541,9 +548,10 @@ class ToolRunner:
             return "No skills learned yet. Use learn_skill to teach one.", True, {}
         rows = []
         for sk in lst:
-            what = (f"goal: {sk['goal']}; score {sk['score']}; {_metrics_brief(sk['metrics'])}" if sk.get("goal")
+            what = ("combination: " + ", ".join(sk["sequence"]) if sk.get("sequence")
+                    else f"goal: {sk['goal']}; score {sk['score']}; {_metrics_brief(sk['metrics'])}" if sk.get("goal")
                     else "activates the walking command neurons (the walking model steps)" if sk.get("command")
-                    else f"muscles followed the plan {sk['score']:.2f}" + (f"; {_metrics_brief(sk['metrics'])}" if sk.get("metrics") else ""))
+                    else f"muscles followed the plan {(sk['score'] or 0):.2f}" + (f"; {_metrics_brief(sk['metrics'])}" if sk.get("metrics") else ""))
             on = [k for k, v in (sk.get("assists") or {}).items() if v]
             parts = "" if sk.get("command") or sk.get("assists") is None else f"; hand-built parts: {', '.join(on) or 'none'}"
             rows.append(f"- {sk['name']}{' (built in)' if sk['builtin'] else ''}: {sk['description']} "
@@ -558,6 +566,29 @@ class ToolRunner:
         if eng.get(name):
             return (f"'{name}' is already learned (score {eng.get(name)['score']}). Use do_skills or test_skill, "
                     f"refine_skill to improve it, or pick another name."), True, {}
+        base = re.sub(r"(_?v\d+|_\d+)$", "", name)
+        kin = [k for k in eng.lib if re.sub(r"(_?v\d+|_\d+)$", "", k) == base]
+        if kin:
+            return (f"There is already '{kin[0]}'. Don't start a new version from scratch: refine_skill(name='{kin[0]}', "
+                    f"goal=..., keyframes=... if the plan should change) continues from what it learned and keeps whichever "
+                    f"version does better. (To really start over, forget it first, or pick a name that says what's "
+                    f"different.)"), False, {}
+        text = f"{name} {description}".lower()
+        walking = any(w in text for w in ("walk", "step", "run ", "crawl")) or \
+            (isinstance(goal, str) and goal.split("+")[0] in ("forward", "backward", "turn_left", "turn_right"))
+        if keyframes and walking and not gait:
+            dur = float(duration or max((float(k.get("t", 0)) for k in keyframes), default=0))
+            legs = any(k.split(".")[0] in ("LF", "LM", "LH", "RF", "RM", "RH") for kf in keyframes for k in kf)
+            if legs and dur >= 0.8 and len(keyframes) < 6 * dur:
+                return (f"This plan has {len(keyframes)} keyframes over {dur:g} s: the legs would mostly hold still, which "
+                        "can't move the fly. Walking needs every leg to lift, swing forward, press down and sweep back "
+                        "several times a second (tripod gait, ~8 keyframes per step). Use gait={\"steps_per_s\": 5, "
+                        "\"duration\": ...} for a plan made from a real fly's recorded steps (with goal forward), or the "
+                        "built-in walk_forward (the walking model), and combine_skills to chain walking with other "
+                        "skills."), False, {}
+        if gait and goal is None:
+            t = float(gait.get("turn", 0) or 0)
+            goal = "backward" if gait.get("backwards") else "turn_left" if t > 0.3 else "turn_right" if t < -0.3 else "forward"
         if keyframes:
             plan = {"duration": duration, "keyframes": keyframes}
         elif gait:
@@ -582,6 +613,9 @@ class ToolRunner:
         if not old:
             return (f"'{name}' isn't one of your learned skills (built-in ones can't be changed). Learn it first, "
                     f"or learn a new variant under another name."), False, {}
+        if old.get("sequence"):
+            return (f"'{name}' is a combination of skills: refine its parts "
+                    f"({', '.join(x['skill'] for x in old['sequence'])}), or combine_skills again."), False, {}
         goal = goal if goal is not None else old.get("goal")
         if goal is None and not keyframes:
             return ("Give it a goal (what the movement should achieve) to practise for, or corrected keyframes."), False, {}
@@ -610,6 +644,19 @@ class ToolRunner:
         return (f"'{name}' in {r['runs']} runs of {r['duration']:.2f} s (+0.4 s after) in a practice copy, hand-built parts "
                 f"{'on: ' + ', '.join(on) if on else 'all off'}: {_metrics_brief(r['metrics'])}"
                 + (f" (run-to-run spread {spread})" if spread else "") + f".{sc}"), True, {}
+
+    async def t_combine_skills(self, name, description, steps):
+        eng = getattr(self.world, "skills", None)
+        if eng is None:
+            return "The body isn't running.", False, {}
+        if eng.builtin.get(name):
+            return f"'{name}' is a built-in skill; pick another name.", False, {}
+        try:
+            sk = eng.combine(name, description, steps)
+        except (ValueError, TypeError) as e:
+            return f"Couldn't combine: {e}", False, {}
+        parts = ", ".join(x["skill"] + (f" x{x['repeat']}" if x["repeat"] > 1 else "") for x in sk["sequence"])
+        return f"Saved '{name}': {parts} (about {sk['duration']:g} s). do_skills(['{name}']) plays it.", True, {}
 
     async def t_do_skills(self, names, repeat=1):
         eng = getattr(self.world, "skills", None)

@@ -380,3 +380,5 @@ body.mode-agent [data-for="lab"], body.mode-lab [data-for="agent"] { display: no
 .place-hint[hidden] { display: none; }
 .skill-live .bar { margin: 4px 0; }
 .skill-live .m { color: var(--muted); font-size: 11px; line-height: 1.5; }
+#topbar .restart { margin-left: 10px; padding: 2px 10px; font-size: 12px; background: #ffcf5c; color: #1b1400; border: 0; border-radius: 10px; cursor: pointer; }
+#topbar .restart[hidden] { display: none; }

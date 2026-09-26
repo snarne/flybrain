@@ -26,7 +26,11 @@ echo Starting Flybrain (%P%). The first run installs Python and packages; this t
 :run
 "%UV%" run --frozen --python 3.12 server\app.py
 if %ERRORLEVEL% EQU 0 goto done
-echo Flybrain stopped unexpectedly (exit code %ERRORLEVEL%). Details: data\logs\server.log. Restarting...
+if %ERRORLEVEL% EQU 75 (
+  echo Restarting Flybrain to load the updated code...
+) else (
+  echo Flybrain stopped unexpectedly ^(exit code %ERRORLEVEL%^). Details: data\logs\server.log. Restarting...
+)
 set NO_BROWSER=1
 timeout /t 2 /nobreak >nul
 goto run

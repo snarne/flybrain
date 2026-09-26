@@ -58,6 +58,28 @@ def log_error(where, exc=None):
 FPS = 30
 STATUS_EVERY = 6          # frames
 WINDOW_MS = 250.0         # window for firing-rate readouts
+RESTART_CODE = 75         # exit code that run.sh / run.bat answer by starting the app again
+
+
+def _code_stamp():
+    """The newest modification time of the server's code: if the code on disk changes while the app
+    runs (an update was pulled), the page offers a restart."""
+    here = Path(__file__).parent
+    try:
+        return max(f.stat().st_mtime for d in (here, here / "agent") for f in d.glob("*.py"))
+    except (OSError, ValueError):
+        return 0.0
+
+
+CODE_STAMP = _code_stamp()
+_code_check = [0.0, False]
+
+
+def code_changed():
+    now = time.time()
+    if now - _code_check[0] > 10:
+        _code_check[:] = [now, _code_stamp() > CODE_STAMP + 1]
+    return _code_check[1]
 
 
 class World:
@@ -353,6 +375,7 @@ class World:
                        "channels": sorted(self.channel_stim)},
             "runaway": bool(not self.active_presets and not self.neuron_stim and not self.channel_stim
                             and (self.rate > 1.0).sum() > 2000),
+            "code_changed": code_changed(),
         }
 
     def all_readouts(self):
@@ -779,6 +802,15 @@ async def post_command(c: dict):
     return {"ok": True}
 
 
+@app.post("/api/restart")
+async def post_restart():
+    """Start the app again (to load updated code): run.sh / run.bat restart it on this exit code, the language
+    model keeps running and is picked up again, and the page reconnects by itself."""
+    skills.pool.stop()
+    asyncio.get_running_loop().call_later(0.5, lambda: os._exit(RESTART_CODE))
+    return {"ok": True}
+
+
 @app.get("/api/agent/status")
 def get_agent_status():
     return agent_status()
@@ -888,6 +920,17 @@ async def post_test(c: dict):
                                  duration=c.get("duration"))
     except (ValueError, RuntimeError) as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+
+@app.post("/api/skills/combine")
+def post_combine(c: dict):
+    """{"name", "description", "steps": [{"skill": ..., "repeat": n}, ...]}: a sequence of skills under one name."""
+    try:
+        sk = skills.combine(c["name"], c.get("description", ""), c.get("steps"))
+    except (ValueError, TypeError, KeyError) as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    emit({"type": "skills", "skills": skills.list()})
+    return {"ok": True, "skill": sk}
 
 
 @app.post("/api/skills/do")

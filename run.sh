@@ -36,7 +36,11 @@ while true; do
   "$UV" run --frozen --python 3.12 server/app.py
   code=$?
   if [ $code -eq 0 ] || [ $code -eq 130 ] || [ $code -eq 143 ]; then exit $code; fi
-  echo "Flybrain stopped unexpectedly (exit code $code). Details: data/logs/server.log. Restarting..."
+  if [ $code -eq 75 ]; then
+    echo "Restarting Flybrain to load the updated code..."
+  else
+    echo "Flybrain stopped unexpectedly (exit code $code). Details: data/logs/server.log. Restarting..."
+  fi
   export NO_BROWSER=1
   sleep 2
 done

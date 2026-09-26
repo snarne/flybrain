@@ -95,6 +95,8 @@ too: open **Use another model** in the same place (details under "Any model" bel
   than reloaded). What went wrong is written to `data/logs/server.log`, including hard crashes.
 - **The top bar shows less than 1× real time.** Big inputs (odours, whole-eye vision) are heavy for
   one CPU core; lower the speed in the Senses tab or switch the input off.
+- **You pulled an update while the app was running.** The top bar shows *Updated · restart*; press it
+  (or close and start the app again) so the new code is used. The language model keeps running.
 - **Learning a skill takes a while, or the computer gets busy.** Skills practise in background copies
   of the fly: each takes a CPU core and about 1 GB of memory, and the first one takes ~15 s to start.
   The app picks how many from your cores and memory (1 to 4); set `FLYBRAIN_PRACTICE_WORKERS=2` (for
@@ -449,7 +451,10 @@ versions become the baselines to beat. `test_skill` measures any skill with or w
 touching the live fly.
 
 After that, `do_skills` just replays the stored drive: no search, no practice. To type a word, Fly
-learns one small tap skill per leg once, then chains them. The built-in skills are listed too:
+learns one small tap skill per leg once, then chains them; `combine_skills` saves a chain under one
+name (e.g. `walk_forward` ×4, then a jump: the walking runs as one continuous 4 s walk). To improve a
+skill Fly refines it rather than starting a new version from scratch, so it keeps what it learned
+and never ends up worse. The built-in skills are listed too:
 walking forwards and backwards and turning left and right activate those command neurons (P9, MDN,
 DNa02 left or right) and the walking model steps the legs; grooming its antennae is a recorded
 movement.
@@ -586,7 +591,7 @@ The **LLM** (Qwen) then answers, streaming its thinking (collapsible) and its re
 read/write/edit files and run commands in the `workspace/` folder (commands ask for your approval
 unless you tick Auto-approve), long-term notes (remember/recall), its body
 (body_experiment, stimulate_senses, brain_status, list_skills, motor_reference, learn_skill,
-refine_skill, test_skill, do_skills, body_parts), and neuroscience tools (below).
+refine_skill, test_skill, combine_skills, do_skills, body_parts), and neuroscience tools (below).
 
 It also has a way to learn the system itself, so it doesn't guess: `guide` (a guide to what's real
 connectome and what's hand-built, how the body and practice work, and what each tool is for;
@@ -734,7 +739,9 @@ GET /api/practice       the practice copies, goal metrics and presets
 POST /api/skills/learn  {"name", "description", "keyframes" or "gait", "goal", "trials", "baseline",
                          "assists", "drive_at", "refine": true to improve a learned skill}
 POST /api/skills/test   {"name", "assists", "goal", "runs"}: measured in a practice copy
+POST /api/skills/combine {"name", "description", "steps": [{"skill": ..., "repeat": n}]}: a sequence
 POST /api/skills/do     {"names": [...], "repeat": 1}: on the live fly
+POST /api/restart       start the app again (run.sh / run.bat), e.g. after an update
 
 {"cmd": "chat", "text": "..."} | {"cmd": "stop"} | {"cmd": "new_chat"} | {"cmd": "model_setup", "model": "qwen3.5-9b"}
 {"cmd": "model_custom", "kind": "hf" | "path" | "server", "value": "...", "model": "...", "api_key": "..."}
