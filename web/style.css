@@ -388,3 +388,7 @@ body.mode-agent [data-for="lab"], body.mode-lab [data-for="agent"] { display: no
   background: rgba(20, 24, 32, 0.85); color: var(--muted); cursor: pointer; }
 .body-switches button.on { color: #1b1400; background: #ffcf5c; border-color: #ffcf5c; }
 .body-switches button:disabled { opacity: 0.4; cursor: default; }
+.hello .suggest { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.hello .suggest button { font: inherit; font-size: 13px; text-align: left; color: var(--text); background: rgba(255, 255, 255, 0.04);
+  border: 1px solid #333b48; border-radius: 10px; padding: 5px 10px; cursor: pointer; }
+.hello .suggest button:hover { border-color: #ffcf5c; }

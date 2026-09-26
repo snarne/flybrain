@@ -718,7 +718,7 @@ demoBtn.onclick = () => {
 const skillList = document.getElementById('skill-list');
 const skillLive = document.getElementById('skill-live');
 function renderSkills(list) {
-  skillList.innerHTML = list.length ? '' : '<div class="empty">None yet. Ask Fly in chat to learn a movement, e.g. “learn to tap your front left leg, then type hi”.</div>';
+  skillList.innerHTML = list.length ? '' : '<div class="empty">None yet. Ask Fly in chat to learn a movement, e.g. “jump as high as you can without flying off”.</div>';
   for (const s of list) {
     const d = document.createElement('div');
     d.className = 'skill-item';

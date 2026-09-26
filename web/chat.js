@@ -94,10 +94,23 @@ function add(html, cls) {
   scroll();
   return d;
 }
+const SUGGESTIONS = [
+  'Jump as high as you can without flying off',
+  'Walk forward for 4 seconds, then jump',
+  'Learn to walk with only your neurons and muscles (no walking model) and compare it with the built-in walk',
+  'Which neurons make you escape a looming shadow? Test it by silencing them',
+];
 function emptyState() {
   if (log.children.length) return;
-  add(`<p><strong>Fly</strong> is an open language model running on this computer, with a fast System 1 (Laya) in front of it and the fly brain as its body.</p>
-       <p>Try: <em>“Design a URL shortener that scales”</em> · <em>“Write a Python script that finds primes and run it”</em> · <em>“Taste some sugar and tell me what your brain did”</em></p>`, 'hello');
+  const d = add(`<p><strong>Fly</strong> is a language model running on this computer, and the fly is its body: the whole
+       BANC brain and nerve cord, driving a physical fly. Ask it to learn movements (it practises them in background
+       copies of the fly and keeps what works), to run experiments on its own neurons, or anything else.</p>
+       <p>Try (click to use):</p><div class="suggest">${SUGGESTIONS.map(s => `<button type="button">${esc(s)}</button>`).join('')}</div>`, 'hello');
+  d.querySelectorAll('.suggest button').forEach(b => b.onclick = () => {
+    const p = $('prompt');
+    p.value = b.textContent;
+    p.focus();
+  });
 }
 
 const INTENT = { chat: 'Chat', question: 'Question', code: 'Code', design: 'Design', brain: 'Brain' };
