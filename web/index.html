@@ -18,6 +18,10 @@
     <span class="sep">·</span>
     <span id="t-firing">0 firing</span>
   </div>
+  <div class="appmode" role="group" aria-label="Mode">
+    <button data-mode="agent" title="Talk to Fly, the AI whose body this is, and teach it movements">Agent</button>
+    <button data-mode="lab" title="Experiment on the fly: put things in its world, teach it, activate and record neurons">Lab</button>
+  </div>
   <div class="viewmode" role="group" aria-label="View">
     <button data-view="split" class="on">Fly + brain</button>
     <button data-view="fly">Fly</button>
@@ -35,51 +39,6 @@
     <div id="fly-senses" class="fly-senses"></div>
   </div>
   <div id="decision" class="decision" hidden></div>
-  <div class="experiments">
-    <div class="exp-group" title="Put something in the fly's world, near it. It senses it from where it is: each antenna smells its own side, each eye sees its own side, each foot tastes what it stands on."><span>Put in the world</span>
-      <button data-exp="loom" data-side="left" title="A dark object swoops at the fly from its left">Threat ◀</button>
-      <button data-exp="loom" data-side="right" title="A dark object swoops at the fly from its right">Threat ▶</button>
-      <button data-exp="target" data-side="left" title="A small dark fly-sized object darting back and forth ahead-left (small-object detectors LC10a)">Target ◀</button>
-      <button data-exp="target" data-side="right" title="The same ahead-right">Target ▶</button>
-      <button data-exp="sugar" title="A sugar drop just in front of its front feet">Sugar drop</button>
-      <button data-exp="bitter" title="A bitter drop just in front of its front feet">Bitter drop</button>
-      <button data-exp="fruit" title="Ripe fruit smell (Or42b, Or22a, Or59b receptors) from a source ahead">Fruit smell</button>
-      <button data-exp="co2" title="Carbon dioxide, a stress odour (Gr21a/Gr63a)">CO₂</button>
-      <button data-exp="geosmin" title="Geosmin, the smell of harmful mould (Or56a)">Geosmin</button>
-      <button data-exp="heat" title="A warm patch of air (hot cells in the arista)">Warm</button>
-      <button data-exp="cold" title="A cool patch of air (cold cells in the arista)">Cool</button>
-      <button data-exp="humid" title="Moist air (hygrosensory neurons)">Humid</button>
-      <button data-exp="dry" title="Dry air">Dry</button>
-      <button data-exp="stripes" data-side="left" title="A striped drum turning to the left around the arena (motion detectors T4/T5)">Stripes ⟲</button>
-      <button data-exp="stripes" data-side="right" title="A striped drum turning to the right">Stripes ⟳</button>
-      <button data-exp="clear" title="Take everything out of the world">Clear</button>
-    </div>
-    <div class="exp-group"><span>Do to it</span>
-      <button data-exp="probe_sugar" title="Touch a sugar drop to the proboscis">Sugar to mouth</button>
-      <button data-exp="probe_bitter" title="Touch a bitter drop to the proboscis">Bitter to mouth</button>
-      <button data-exp="dust" title="Dust on the antennae">Dust</button>
-      <button data-exp="reset" data-home="1" title="Put the fly back in the middle of the arena">Re-centre</button>
-      <button id="demo" title="Run a sequence of these">▶ Demo</button>
-    </div>
-    <div class="exp-group" title="Learning in the mushroom body. Put an odour in the world, then reward or punish while the fly smells it: dopamine neurons weaken the synapses from that odour's Kenyon cells onto the output neurons they gate, and the next time it smells the odour, its brain responds differently."><span>Teach it</span>
-      <button data-exp="reward" title="Activate the PAM dopamine neurons for 1 s (reward, like sugar)">Reward</button>
-      <button data-exp="punish" title="Activate the PPL1 dopamine neurons for 1 s (punishment, like a shock)">Punish</button>
-      <button data-exp="forget" title="Restore every learned synapse to its connectome strength">Forget</button>
-    </div>
-    <div class="exp-group" title="Drives these descending (command) neurons directly, like optogenetics. What the body does next is up to the connectome and the leg rhythm setting below."><span>Activate neurons</span>
-      <button data-exp="p9">P9 · walk</button>
-      <button data-exp="mdn">MDN · back up</button>
-      <button data-exp="dna02_l">DNa02 L · turn</button>
-      <button data-exp="dna02_r">DNa02 R · turn</button>
-      <button data-exp="gf">Giant fibre · jump</button>
-      <button data-exp="adn">aDN · groom</button>
-    </div>
-    <div class="exp-group" id="body-opts"><span>Body</span>
-      <button data-body="physics" title="Physical body: gravity, contacts and a real ball (MuJoCo). Off = joint angles straight from the muscles.">Physics</button>
-      <button data-body="feedback" title="The legs' sense organs (chordotonal organs, hair plates, campaniform sensilla, tarsal bristles) report joint angles, movement and load back into the nerve cord">Leg feedback</button>
-      <button data-body="rhythm" title="Where the leg rhythm comes from when the brain's command neurons fire. Neurons: the nerve cord's own premotor neurons, as rhythm generators. Replay: a stored drive pattern made from a real fly's steps. Off: only what the connectome does by itself. Click to cycle.">Rhythm: neurons</button>
-    </div>
-  </div>
 </div>
 
 <div id="runaway" hidden>
@@ -89,8 +48,9 @@
 
 <aside id="left" class="panel">
   <nav class="tabs" role="tablist">
-    <button role="tab" data-tab="chat" class="on">Chat</button>
-    <button role="tab" data-tab="senses">Senses</button>
+    <button role="tab" data-tab="chat" data-for="agent" class="on">Chat</button>
+    <button role="tab" data-tab="lab" data-for="lab">Experiments</button>
+    <button role="tab" data-tab="senses" data-for="lab">Senses</button>
   </nav>
 
   <div id="tab-chat" class="tab">
@@ -111,6 +71,79 @@
     </form>
   </div>
 
+
+  <div id="tab-lab" class="tab" hidden>
+    <section class="lab-sec">
+      <h2>Put in the world <small>near the fly; it senses each thing from where it is (each antenna, eye and foot its own side)</small></h2>
+      <div class="exp-group">
+        <button data-exp="loom" data-side="left" title="A dark object swoops at the fly from its left">Threat ◀</button>
+      <button data-exp="loom" data-side="right" title="A dark object swoops at the fly from its right">Threat ▶</button>
+      <button data-exp="target" data-side="left" title="A small dark fly-sized object darting back and forth ahead-left (small-object detectors LC10a)">Target ◀</button>
+      <button data-exp="target" data-side="right" title="The same ahead-right">Target ▶</button>
+      <button data-exp="sugar" title="A sugar drop just in front of its front feet">Sugar drop</button>
+      <button data-exp="bitter" title="A bitter drop just in front of its front feet">Bitter drop</button>
+      <button data-exp="fruit" title="Ripe fruit smell (Or42b, Or22a, Or59b receptors) from a source ahead">Fruit smell</button>
+      <button data-exp="co2" title="Carbon dioxide, a stress odour (Gr21a/Gr63a)">CO₂</button>
+      <button data-exp="geosmin" title="Geosmin, the smell of harmful mould (Or56a)">Geosmin</button>
+      <button data-exp="heat" title="A warm patch of air (hot cells in the arista)">Warm</button>
+      <button data-exp="cold" title="A cool patch of air (cold cells in the arista)">Cool</button>
+      <button data-exp="humid" title="Moist air (hygrosensory neurons)">Humid</button>
+      <button data-exp="dry" title="Dry air">Dry</button>
+      <button data-exp="stripes" data-side="left" title="A striped drum turning to the left around the arena (motion detectors T4/T5)">Stripes ⟲</button>
+      <button data-exp="stripes" data-side="right" title="A striped drum turning to the right">Stripes ⟳</button>
+      <button data-exp="clear" title="Take everything out of the world">Clear</button>
+      </div>
+    </section>
+    <section class="lab-sec">
+      <h2>Do to it <small>what an experimenter does</small></h2>
+      <div class="exp-group">
+        <button data-exp="probe_sugar" title="Touch a sugar drop to the proboscis">Sugar to mouth</button>
+      <button data-exp="probe_bitter" title="Touch a bitter drop to the proboscis">Bitter to mouth</button>
+      <button data-exp="dust" title="Dust on the antennae">Dust</button>
+      <button data-exp="reset" data-home="1" title="Put the fly back in the middle of the arena">Re-centre</button>
+      <button id="demo" title="Run a sequence of these">▶ Demo</button>
+      </div>
+    </section>
+    <section class="lab-sec">
+      <h2>Teach it <small>put an odour near it, then reward or punish while it smells it: dopamine changes that odour's mushroom body synapses</small></h2>
+      <div class="exp-group">
+        <button data-exp="reward" title="Activate the PAM dopamine neurons for 1 s (reward, like sugar)">Reward</button>
+      <button data-exp="punish" title="Activate the PPL1 dopamine neurons for 1 s (punishment, like a shock)">Punish</button>
+      <button data-exp="forget" title="Restore every learned synapse to its connectome strength">Forget</button>
+      </div>
+      <div id="memory" class="memory"><div class="empty">Nothing learned yet. Put an odour in the world, then Reward or Punish while the fly smells it.</div></div>
+    </section>
+    <section class="lab-sec">
+      <h2>Activate neurons <small>drive command neurons directly, like optogenetics; the rest is up to the wiring</small></h2>
+      <div class="exp-group">
+        <button data-exp="p9">P9 · walk</button>
+      <button data-exp="mdn">MDN · back up</button>
+      <button data-exp="dna02_l">DNa02 L · turn</button>
+      <button data-exp="dna02_r">DNa02 R · turn</button>
+      <button data-exp="gf">Giant fibre · jump</button>
+      <button data-exp="adn">aDN · groom</button>
+      </div>
+    </section>
+    <section class="lab-sec">
+      <h2>Silence neurons <small>ablate a group until you switch it back; see what the fly can still do</small></h2>
+      <div class="exp-group">
+        <button data-ablate="vision" title="All 7,284 visual projection neurons (the optic lobes' output to the brain)">Vision</button>
+        <button data-ablate="giant_fibre" title="The two giant fibres (DNp01), the fast escape pathway">Giant fibres</button>
+        <button data-ablate="antennal_lobe" title="Antennal lobe projection neurons: smell to the brain">Smell relay</button>
+        <button data-ablate="mushroom_body" title="All 4,504 Kenyon cells: no learning">Mushroom body</button>
+        <button data-ablate="lateral_horn" title="Lateral horn neurons (innate odour responses)">Lateral horn</button>
+        <button data-ablate="descending" title="All 1,316 descending neurons: the brain can't reach the body">Descending</button>
+      </div>
+    </section>
+    <section class="lab-sec" id="body-opts">
+      <h2>Body <small>physics, the legs' sense organs, and walking</small></h2>
+      <div class="exp-group">
+        <button data-body="physics" title="Physical body: gravity, contacts and friction on the arena floor (MuJoCo). Off = joint angles straight from the muscles.">Physics</button>
+      <button data-body="feedback" title="The legs' sense organs (chordotonal organs, hair plates, campaniform sensilla, tarsal bristles) report joint angles, movement and load back into the nerve cord">Leg feedback</button>
+      <button data-body="rhythm" title="Walking: on, the walking command neurons (P9, MDN, DNa01/02) set the legs stepping, fast or slow, forwards or backwards, turning; off, only what the connectome does by itself. Click to switch.">Walking: on</button>
+      </div>
+    </section>
+  </div>
   <div id="tab-senses" class="tab" hidden>
     <section>
       <h2>Senses <small>turn inputs on and watch the signal spread</small></h2>
@@ -158,21 +191,21 @@
 </aside>
 
 <aside id="right" class="panel">
-  <section>
+  <section data-for="agent">
     <h2>Skills <small>movements the fly has learned · the first time is slow, then it's instant</small></h2>
     <div id="skill-live" class="skill-live" hidden></div>
     <div id="skill-list"></div>
   </section>
-  <section>
+  <section data-for="agent">
     <h2>Body link <small>what the agent is doing to its fly brain</small></h2>
     <div id="bridge-feed"><div class="empty">Quiet. Say something in Chat.</div></div>
   </section>
-  <section>
+  <section data-for="lab">
     <h2>Neurons → muscles <small>how hard each body part's motor neurons are driving its muscles · click to find them</small></h2>
     <div id="pathways"></div>
     <div class="legend"><span class="via brain">motor</span> motor neurons → muscles &nbsp; <span class="via cord">command</span> descending neurons, brain → nerve cord</div>
   </section>
-  <section>
+  <section data-for="lab">
     <h2>Brain regions <small>activity now · click to show or hide</small></h2>
     <div id="regions"></div>
     <div class="row slider-row">
@@ -184,7 +217,7 @@
       <label><input type="checkbox" id="show-outline" checked> Brain outline</label>
     </div>
   </section>
-  <section>
+  <section data-for="lab">
     <h2>Firing now</h2>
     <div id="top"></div>
   </section>

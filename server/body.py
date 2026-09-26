@@ -19,19 +19,21 @@ some hysteresis so a brief twitch doesn't flip it back and forth.
 Rules from fly physiology the connectome alone doesn't give:
 - Feet on the ground stop flight (tarsal reflex): the flight motor only runs once no foot has touched
   the ground for a moment, e.g. after the giant-fibre jump.
-- Rhythms: walking and grooming need nerve-cord rhythm generators. Three settings:
-  "neurons": the connectome's own premotor interneurons, given the slow burst dynamics of rhythm
-  circuits, make the steps (cpg.py); "replay": a stored neuron-drive pattern made from a real fly's
-  steps plays while the brain's command neurons for it fire (skills.py); "off": only what the wiring
-  does by itself.
+- Rhythms: walking and grooming need nerve-cord rhythm generators, which the connectome model doesn't
+  produce by itself. Two settings: "neurons": the walking command neurons (P9, MDN, DNa01/02, ...)
+  set six leg oscillators stepping with a real fly's recorded steps (locomotion.py), the legs' premotor
+  neurons firing along (cpg.py), and the aDN grooming neurons play the grooming movement (a built-in
+  skill); "off": only what the wiring does by itself.
 """
 import json
 import math
+import threading
 
 import numpy as np
 
 import arena as arena_mod
 import feedback as feedback_mod
+import locomotion as loco_mod
 import physics as physics_mod
 
 # Descending neurons that can be activated directly (like optogenetics), and what's known about them
@@ -43,7 +45,7 @@ ACTIVATE = {
     "gf": ("DNp01", "Giant fibre DNp01: escape takeoff (von Reyn et al. 2014)"),
     "adn": ("DNg62", "aDN1 / DNg62: antennal grooming (Hampel et al. 2015)"),
 }
-RHYTHMS = ("neurons", "replay", "off")
+RHYTHMS = ("neurons", "off")
 # reinforcement, as fly labs give it: activating the mushroom body's dopamine neurons directly
 ODOURS = ("fruit", "co2", "geosmin", "cva")
 REINFORCE = {"reward": ("pam", "PAM dopamine neurons: reward (Liu et al. 2012; Burke et al. 2012)"),
@@ -54,7 +56,9 @@ LEGS = ("LF", "LM", "LH", "RF", "RM", "RH")
 class Body:
     def __init__(self, world):
         self.w = world
-        self.rhythm = "replay"       # "neurons" | "replay" | "off" (see the module docstring)
+        self.rhythm = "neurons"      # "neurons" | "off" (see the module docstring)
+        self.phys_lock = threading.RLock()
+        self.walker = loco_mod.Walker()  # the legs' stepping, commanded by descending neurons (rhythm "neurons")
         self.phys = None             # physics.PhysicsBody when the physical body is on
         self.phys_error = None
         self.sensed = None
@@ -79,9 +83,10 @@ class Body:
 
     @rhythms.setter
     def rhythms(self, on):
-        self.set_rhythm("replay" if on else "off")
+        self.set_rhythm("neurons" if on else "off")
 
     def set_rhythm(self, mode):
+        mode = "neurons" if mode == "replay" else mode      # the older replayed-steps setting
         if mode not in RHYTHMS:
             return
         self.rhythm = mode
@@ -89,7 +94,7 @@ class Body:
         if cpg is not None:
             cpg.enable(mode == "neurons")
         eng = getattr(self.w, "skills", None)
-        if mode != "replay" and eng is not None and eng.state and eng.state.get("kind") == "reflex":
+        if mode == "off" and eng is not None and eng.state and eng.state.get("kind") == "reflex":
             eng.stop()
 
     def neurons_for(self, spec):
@@ -102,6 +107,10 @@ class Body:
     # ------------------------------------------------------------ which body
     def set_physics(self, on):
         """Switch between the physical body and the kinematic one. Returns whether physics is on."""
+        with self.phys_lock:
+            return self._set_physics(on)
+
+    def _set_physics(self, on):
         if on and self.phys is None:
             try:
                 self.phys = physics_mod.PhysicsBody(self.neutral)
@@ -139,8 +148,16 @@ class Body:
         self._untouched = 0.0
         self._cmd = None
         self.fb_rates, self.fb_summary = {}, {}
+        self.walker.reset()
         if home:
             self.pose = {"x": 0.0, "y": 0.0, "heading": 0.0}
+        with self.phys_lock:          # never while the physics thread is mid-step (MuJoCo isn't thread-safe)
+            self._reset_physics(home)
+        for name in list(self.w.channel_stim):
+            if name.startswith(("body_", "act_", "proprio", "world")):
+                self.w.pending.append({"cmd": "channel", "name": name, "rate": 0})
+
+    def _reset_physics(self, home):
         if self.phys is not None:
             if home:
                 self.phys.reset(pos=(0.0, 0.0), heading=0.0)
@@ -152,9 +169,6 @@ class Body:
             self.sensed = self.phys.sensed()
         else:
             self.sensed = None
-        for name in list(self.w.channel_stim):
-            if name.startswith(("body_", "act_", "proprio", "world")):
-                self.w.pending.append({"cmd": "channel", "name": name, "rate": 0})
 
     def fly(self):
         """Where the fly is and what its body is doing, for the arena's senses."""
@@ -246,17 +260,11 @@ class Body:
         "turn_right": "Turning right", "groom_antennae": "Grooming its antennae"}
 
     def _reflex_for(self, r):
-        fwd, back, groom = r.get("forward", 0), r.get("backward", 0), r.get("groom", 0)
-        steer = r.get("turn_l", 0) - r.get("turn_r", 0)
+        """The built-in grooming movement plays while the aDN grooming command neurons fire (walking is
+        locomotion.py's)."""
+        groom = r.get("groom", 0)
         if groom > 6:
             return "groom_antennae", "groom", f"aDN grooming command neurons at {groom:.0f} Hz"
-        if abs(steer) > 20 and abs(steer) >= max(fwd, back):
-            side = "left" if steer > 0 else "right"
-            return f"turn_{side}", "turn_l" if steer > 0 else "turn_r", f"DNa01/DNa02 {side} steering neurons ahead by {abs(steer):.0f} Hz"
-        if max(fwd, back) > 10:
-            if fwd >= back:
-                return "walk_forward", "forward", f"P9/DNg97 walking command neurons at {fwd:.0f} Hz"
-            return "walk_backward", "backward", f"Moonwalker neurons (MDN) at {back:.0f} Hz"
         return None
 
     def act(self, dt, motor, r, skill=None):
@@ -264,7 +272,17 @@ class Body:
         self.rates = r
         v = motor.value
         eng = getattr(self.w, "skills", None)
-        rx = self._reflex_for(r) if self.rhythm == "replay" else None
+        rx = self._reflex_for(r) if self.rhythm == "neurons" else None
+        W = self.walker
+        moving_skill = eng is not None and eng.state and not eng.state.get("command")
+        if self.rhythm == "neurons" and not moving_skill:
+            cpg = getattr(self.w, "cpg", None)
+            r_all = self.w.all_readouts() if hasattr(self.w, "all_readouts") else r
+            W.command(r_all, cpg.wiring_drive() if cpg is not None else 0.0, dt, yaw_rate=-self.ball[1])
+        else:
+            W.command({}, 0.0, dt)
+        if cpg_follow := getattr(self.w, "cpg", None):
+            cpg_follow.follow(W)
         if rx and eng is not None and not eng.state and not eng.busy and eng.get(rx[0]):
             if not (self.mode == "reflex" and self._reflex == rx[0]):
                 self.events.append({"event": rx[0], "key": rx[1], "why": rx[2]})
@@ -282,7 +300,7 @@ class Body:
             ("fly", "wing.dorsal_longitudinal.L", power > 0.3, "wing power motor neurons (DLM/DVM) firing"),
             ("feed", "proboscis.proboscis_m9.L", v.get("proboscis.rostrum", 0) > 0.25, "MN9 extends the proboscis"),
             ("groom", "groom", r.get("groom", 0) > 5 and max(leg_act["LF"], leg_act["RF"]) > 0.2, f"aDN grooming neurons at {r.get('groom', 0):.0f} Hz, front legs moving"),
-            ("walk", None, walking, "legs stepping"),
+            ("walk", self._walk_key(r), walking or W.w > 0.3, W.why or "legs stepping"),
             ("legs", None, max(leg_act.values()) > 0.25, "leg motor neurons firing"),
         ]
         # flight: the tarsal reflex. With feet on the ground the flight motor is held off; it runs once
@@ -316,7 +334,7 @@ class Body:
             stronger = self.mode == "rest" or (want[0] in order and self.mode in order and order.index(want[0]) < order.index(self.mode))
             need = 0.1 if (stronger or want[0] in ("skill", "reflex")) else 0.5
             if self._pending_t >= need:
-                if want[0] in ("legs", "walk"):
+                if want[0] == "legs" or (want[0] == "walk" and not want[1]):
                     key = max((f"{leg}.{c}" for leg in LEGS for c in ("swing", "lift", "reach", "grip")), key=lambda k: abs(v.get(k, 0)))
                     pools = motor.controls[key][0 if v.get(key, 0) >= 0 else 1]
                     want = (want[0], motor.key[pools[0]] if pools else None, f"{key} motor neurons firing")
@@ -333,7 +351,7 @@ class Body:
             target = {(leg, d): self.neutral[leg][d] + off for leg, dofs in self.joints["legs"].items() for d, off in dofs.items()}
             steer = v.get("wingR.stroke", 0) - v.get("wingL.stroke", 0)      # a bigger right stroke turns left
             flight = {"power": power if self.airborne else 0.0, "steer": steer, "jump": jump}
-            self._cmd = (target, stiff, adh, flight)
+            self._cmd = (target, stiff, adh, flight, W.advance if (W.walking or W.w > 0) else None)
             if self.sensed is not None:
                 A = self.sensed["angle"]
                 self.joints["legs"] = {leg: {d: round(A[(leg, d)] - self.neutral[leg][d], 4) for d in physics_mod.DOFS}
@@ -350,8 +368,22 @@ class Body:
                     self.ball = [self.ball[0] + k * (fwd - self.ball[0]), self.ball[1] + k * (-turn - self.ball[1])]
                 self._track = (th[0], th[1], hd)
             return
-        # kinematic body: movement estimated from the legs in stance (not lifted): sweeping back pushes
-        # the fly forwards, sweeping forwards pushes it backwards, left vs right turns it
+        # kinematic body: stepping legs follow the walking oscillators; movement is estimated from them,
+        # or else from the legs in stance (not lifted): sweeping back pushes the fly forwards, sweeping
+        # forwards pushes it backwards, left vs right turns it
+        if W.walking or W.w > 0:
+            w, tg, _ = W.advance(dt)
+            for (leg, d), a in tg.items():
+                J = self.joints["legs"].setdefault(leg, {})
+                J[d] = round((1 - w) * J.get(d, 0.0) + w * (a - self.neutral[leg][d]), 4)
+            f, t = W.estimate()
+            k = 0.2
+            self.ball = [(1 - k) * self.ball[0] + k * f, (1 - k) * self.ball[1] + k * -t]
+            p = self.pose
+            p["heading"] -= self.ball[1] * dt
+            p["x"] += self.ball[0] * dt * math.cos(p["heading"])
+            p["y"] += self.ball[0] * dt * math.sin(p["heading"])
+            return
         fwd_l = fwd_r = 0.0
         for leg in LEGS:
             s_now = v.get(f"{leg}.swing", 0)
@@ -377,18 +409,26 @@ class Body:
         """Run the physical body for dt seconds on the last muscle commands, then report what the legs'
         sense organs feel to the nerve cord. Runs alongside the next brain frame (a one-frame, ~33 ms,
         sensorimotor delay, about what a fly has)."""
-        ph = self.phys
-        if ph is None or self._cmd is None:
-            return
-        self.sensed = ph.step(dt, *self._cmd)
+        with self.phys_lock:
+            ph = self.phys
+            if ph is None or self._cmd is None:
+                return
+            self.sensed = ph.step(dt, *self._cmd)
         eng = getattr(self.w, "skills", None)
-        moving = bool(eng is not None and eng.state) or self.rhythm == "neurons" and self.mode in ("walk", "legs", "groom")
+        moving = bool(eng is not None and eng.state) or self.walker.w > 0.1 or self.rhythm == "neurons" and self.mode in ("legs", "groom")
         rates = self.fb.rates(self.sensed, moving, dt)
         if rates != self.fb_rates:
             self.fb_rates = rates
             self.w.pending.append({"cmd": "channel", "name": "proprio", "rates": rates} if rates
                                   else {"cmd": "channel", "name": "proprio", "rate": 0})
         self.fb_summary = self.fb.summary(rates)
+
+    def _walk_key(self, r):
+        """Which command readout to trace back through the wiring when the fly walks."""
+        keys = {"forward": r.get("forward", 0), "backward": r.get("backward", 0), "turn_l": r.get("turn_l", 0),
+                "turn_r": r.get("turn_r", 0)}
+        k, v = max(keys.items(), key=lambda kv: kv[1])
+        return k if v > 5 else None
 
     def _set(self, mode, key, why):
         self.mode, self.mode_t = mode, 0.0

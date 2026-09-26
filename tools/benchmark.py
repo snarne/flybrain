@@ -3,7 +3,6 @@ Score the simulated fly against published experiments.
 
     uv run tools/benchmark.py                       # the default body (physical if MuJoCo is installed)
     uv run tools/benchmark.py --body kinematic
-    uv run tools/benchmark.py --rhythm replay       # rhythms replayed from recorded steps instead of grown
     uv run tools/benchmark.py --rhythm off          # connectome only: no rhythm generators at all
     uv run tools/benchmark.py --feedback 0          # physical body, leg sense organs disconnected
     uv run tools/benchmark.py --only p9_forward,mdn_backward --repeats 1
@@ -114,9 +113,13 @@ def s_approach(r):
 
 
 def s_avoid(r):
+    """How far the fly moved directly away from the source (walking past it doesn't count)."""
     src = r["source"]
-    d0, d1 = _dist(r, 0, src), _dist(r, len(r["xy"]) - 1, src)
-    return clip01((d1 - d0) / 3.0), f"moved {d1 - d0:+.1f} mm away from the source (1 at 3 mm)"
+    (x0, y0), (x1, y1) = r["xy"][0], r["xy"][-1]
+    ux, uy = x0 - src[0], y0 - src[1]
+    n = max(float(np.hypot(ux, uy)), 1e-6)
+    away = ((x1 - x0) * ux + (y1 - y0) * uy) / n
+    return clip01(away / 3.0), f"moved {away:+.1f} mm directly away from the source (1 at 3 mm)"
 
 
 def s_leave_zone(r):
@@ -193,7 +196,7 @@ def s_conditioning(r):
 
 def p_learned_avoidance(trials=3):
     """Fruit approach, then fruit paired with punishment, then fruit approach again."""
-    stim = [("world", ("fruit", 6.0, 5.0, None))]
+    stim = [("world", ("fruit", 6.0, 5.0, None))]          # ahead-left: the odour sets the fly walking towards it
 
     def run(rig):
         t0 = time.time()
@@ -235,9 +238,10 @@ EXPERIMENTS = [
     ("bitter_mouth", "Bitter touched to the proboscis", "No proboscis extension", [("act", "probe_bitter")], 2.0, s_no_feed),
     ("sugar_feed", "Sugar under the front feet", "Proboscis extension (Dethier 1976; Shiu et al. 2024)", [("world", ("sugar", 1.3, 0.0, 1.0))], 2.0, s_feed),
     ("bitter_no_feed", "Bitter under the front feet", "No proboscis extension", [("world", ("bitter", 1.3, 0.0, 1.0))], 2.0, s_no_feed),
-    ("fruit_approach", "Fruity odour 8 mm ahead-left", "Walks towards it (odour attraction)", [("world", ("fruit", 6.0, 5.0, None))], 4.0, s_approach),
-    ("fruit_approach_right", "Fruity odour 8 mm ahead-right", "Walks towards it (the same, mirrored)",
-     [("world", ("fruit", 6.0, -5.0, None))], 4.0, s_approach),
+    ("fruit_approach", "Fruity odour 6 mm to the left", "Turns and walks towards it (odour attraction, osmotropotaxis)",
+     [("world", ("fruit", 0.0, 6.0, None))], 4.0, s_approach),
+    ("fruit_approach_right", "Fruity odour 6 mm to the right", "Turns and walks towards it (the same, mirrored)",
+     [("world", ("fruit", 0.0, -6.0, None))], 4.0, s_approach),
     ("co2_avoid", "CO2 source 4 mm ahead", "Moves away (CO2 avoidance, Suh et al. 2004)", [("world", ("co2", 4.0, 0.0, None))], 4.0, s_avoid),
     ("heat_avoid", "Warm zone around the fly", "Leaves the warm air (Simoes et al. 2021)", [("world", ("heat", 0.5, 0.0, None))], 4.0, s_leave_zone),
     ("optomotor", "Stripes turning left", "Turns with them (optomotor response)", [("stripes", "left")], 3.0, s_optomotor),
@@ -273,7 +277,7 @@ class Rig:
         on = self.body.set_physics(body_kind == "physics")
         if body_kind == "physics" and not on:
             sys.exit(f"physics body unavailable: {self.body.phys_error}")
-        self.body.set_rhythm(rhythms if isinstance(rhythms, str) else ("replay" if rhythms else "off"))
+        self.body.set_rhythm(rhythms if isinstance(rhythms, str) else ("neurons" if rhythms else "off"))
         self.body.set_feedback(feedback)
         self.kind = "physics" if on else "kinematic"
         print(f"loaded in {time.time() - t:.1f} s: {self.kind} body, rhythm: {self.body.rhythm}"
@@ -367,8 +371,8 @@ def analyse(rec):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--body", choices=["physics", "kinematic"], default="physics")
-    ap.add_argument("--rhythm", choices=["neurons", "replay", "off"], default="neurons",
-                    help="leg rhythms from the nerve cord's own neurons, replayed from recorded steps, or none")
+    ap.add_argument("--rhythm", choices=["neurons", "off"], default="neurons",
+                    help="walking commanded by the descending neurons (locomotion.py), or none: the connectome alone")
     ap.add_argument("--feedback", type=float, default=1.0)
     ap.add_argument("--only", default="")
     ap.add_argument("--repeats", type=int, default=3, help="runs per experiment (the model is noisy; scores are averaged)")

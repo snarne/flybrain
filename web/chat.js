@@ -5,20 +5,36 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const fmtBytes = b => b >= 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b >= 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.round(b / 1e3) + ' kB';
 const fmtN = n => (n ?? 0).toLocaleString();
 
-// ------------------------------------------------------------------ tabs
+// ------------------------------------------------------------------ modes and tabs
+// Agent: talk to Fly and teach it movements (chat, skills, body link). Lab: experiment on the fly
+// (put things in its world, teach it, activate neurons, senses, activity). Each keeps its own tab.
 const left = $('left');
+let appMode = 'agent';
+const lastTab = { agent: 'chat', lab: 'lab' };
+function store(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage unavailable */ } }
+function load(k, d) { try { return localStorage.getItem(k) || d; } catch (e) { return d; } }
 function showTab(name) {
   document.querySelectorAll('.tabs [data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
-  $('tab-chat').hidden = name !== 'chat';
-  $('tab-senses').hidden = name !== 'senses';
+  document.querySelectorAll('#left > .tab').forEach(t => { t.hidden = t.id !== 'tab-' + name; });
   left.classList.toggle('wide', name === 'chat');
   document.body.classList.toggle('chat-open', name === 'chat');
-  try { localStorage.setItem('flybrain-tab', name); } catch (e) { /* storage unavailable */ }
+  lastTab[appMode] = name;
+  store('flybrain-tab-' + appMode, name);
+}
+function setMode(mode) {
+  appMode = mode === 'lab' ? 'lab' : 'agent';
+  document.body.classList.toggle('mode-lab', appMode === 'lab');
+  document.body.classList.toggle('mode-agent', appMode === 'agent');
+  document.querySelectorAll('.appmode [data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === appMode));
+  store('flybrain-mode', appMode);
+  const tab = load('flybrain-tab-' + appMode, lastTab[appMode]);
+  const ok = document.querySelector(`.tabs [data-tab="${tab}"][data-for="${appMode}"]`);
+  showTab(ok ? tab : lastTab[appMode]);
+  dispatchEvent(new Event('resize'));
 }
 document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => showTab(b.dataset.tab));
-let startTab = 'chat';
-try { startTab = localStorage.getItem('flybrain-tab') || 'chat'; } catch (e) { /* default */ }
-showTab(startTab);
+document.querySelectorAll('.appmode [data-mode]').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+setMode(load('flybrain-mode', 'agent'));
 
 // ------------------------------------------------------------------ markdown (small, safe: escapes first)
 function inline(s) {

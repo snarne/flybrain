@@ -234,11 +234,6 @@ body.chat-open #inspector { width: 440px; }
 @keyframes flash { to { background: #7a1f1f; } }
 .fly-senses { color: #cfd6e2; font-size: 12px; text-shadow: 0 1px 3px #000; min-height: 16px; }
 
-.experiments {
-  position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; flex-wrap: wrap; gap: 6px 14px;
-  background: rgba(12, 15, 21, 0.82); border: 1px solid var(--line); border-radius: 10px; padding: 7px 9px;
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-}
 .exp-group { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .exp-group > span { color: var(--faint); font-size: 11px; margin-right: 3px; }
 .exp-group button {
@@ -250,10 +245,11 @@ body.chat-open #inspector { width: 440px; }
 #demo { border-color: #ffc85788; color: var(--accent); font-weight: 600; }
 .exp-group button[data-body] { color: var(--faint); }
 .exp-group button[data-body].on { border-color: #3fae66; color: #9ff0bb; background: #16301f; }
+.exp-group button[data-ablate].on { border-color: #d0584a; color: #ffb4a8; background: #3a1714; }
 .exp-group button[data-body]:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .decision {
-  position: absolute; top: 10px; right: 10px; width: min(250px, 42%); max-height: calc(100% - 110px); overflow-y: auto;
+  position: absolute; top: 10px; right: 10px; width: min(250px, 42%); max-height: calc(100% - 20px); overflow-y: auto;
   background: rgba(10, 14, 20, 0.92); border: 1px solid #3aa7c488; border-radius: 12px; padding: 10px 12px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45); font-size: 12px; animation: pop .25s ease-out;
   scrollbar-width: thin; scrollbar-color: #333 transparent;
@@ -291,7 +287,6 @@ body.chat-open #inspector { width: 440px; }
 .legend { color: var(--faint); font-size: 11px; line-height: 1.8; margin-top: 4px; }
 
 @media (max-width: 1100px) {
-  .experiments { gap: 4px 8px; }
   .exp-group button { padding: 2px 6px; font-size: 11px; }
 }
 #view-brain .decision { max-height: calc(100% - 20px); }
@@ -358,3 +353,21 @@ body.chat-open #inspector { width: 440px; }
 .insp-type .m, #insp-path-out .m { color: var(--muted); font-size: 11px; }
 .insp-type .btn { justify-self: start; margin-top: 3px; }
 .insp-path input { width: 100%; background: #11151d; border: 1px solid var(--line-2); color: var(--text); border-radius: 6px; padding: 4px 7px; font-size: 11px; }
+
+/* ---------------------------------------------------------------- Agent / Lab modes */
+.appmode { pointer-events: auto; display: flex; gap: 2px; background: #11151d; border: 1px solid var(--line-2); border-radius: 99px; padding: 2px; margin-right: 8px; }
+.appmode button { background: none; border: 0; border-radius: 99px; padding: 3px 12px; font-size: 11.5px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.appmode button.on { background: var(--accent); color: var(--accent-ink); }
+body.mode-agent [data-for="lab"], body.mode-lab [data-for="agent"] { display: none !important; }
+.lab-sec h2 small { line-height: 1.35; }
+.lab-sec .exp-group { gap: 5px; }
+.lab-sec .exp-group button { padding: 4px 9px; }
+.memory { margin-top: 10px; display: grid; gap: 6px; font-size: 12px; }
+.memory .empty { color: var(--faint); font-size: 11px; line-height: 1.4; }
+.memory .od { display: grid; grid-template-columns: 58px 1fr 38px; align-items: center; gap: 6px; }
+.memory .od .bar { height: 6px; background: #1a1f2a; border-radius: 3px; overflow: hidden; position: relative; }
+.memory .od .bar i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 3px; }
+.memory .od .bar i.av { background: #ff7a6b; }
+.memory .od .bar i.ap { background: #6fd39a; }
+.memory .od .v { color: var(--muted); font-size: 11px; text-align: right; }
+.memory .log { color: var(--faint); font-size: 11px; line-height: 1.4; }

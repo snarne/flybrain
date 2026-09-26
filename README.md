@@ -17,8 +17,9 @@ that can teach it new movements.
   into the nerve cord every frame, so the loop is closed: world → senses → brain → muscles → body →
   senses. For every behaviour you get the pathway that caused it, traced neuron by neuron and lit up
   in 3D.
-- **Leg rhythms from the nerve cord's own neurons**: premotor interneurons picked from the wiring
-  act as each leg's rhythm generator when command neurons fire.
+- **Walking commanded by its descending neurons**: when the walking command neurons fire (P9 for
+  forwards, the moonwalker neurons for backwards, DNa02 for turning), the six legs step in a tripod
+  with a real fly's recorded steps, as fast, which way and turning as the neurons say.
 - **It learns.** Pair an odour with reward or punishment and the mushroom body's own synapses
   change: dopamine neurons weaken the connections from that odour's Kenyon cells onto the output
   neurons they gate, and not those of other odours.
@@ -87,6 +88,9 @@ too: open **Use another model** in the same place (details under "Any model" bel
 - **Port 8765 is busy.** Start with another port: `PORT=8800 ./run.sh` (Windows: `set PORT=8800` then
   `run.bat`).
 - **A download failed.** Run it again; downloads resume.
+- **The page says "reconnecting".** The server stopped; `run.sh` / `run.bat` start it again by
+  themselves, and the page reconnects (a language model that was running is picked up again rather
+  than reloaded). What went wrong is written to `data/logs/server.log`, including hard crashes.
 - **The top bar shows less than 1× real time.** Big inputs (odours, whole-eye vision) are heavy for
   one CPU core; lower the speed in the Senses tab or switch the input off.
 - **Start from scratch.** Delete the hidden `.cache`, `.tools` and `.venv-*` folders (and
@@ -102,6 +106,10 @@ too: open **Use another model** in the same place (details under "Any model" bel
   muscles right now, plus the brain's main descending command neurons. Click a row to find those
   neurons.
 - **Skills** (right): movements the fly has learned. ▶ replays one.
+- **Agent / Lab** (top): *Agent* is for talking to Fly (chat on the left; skills and the body link on
+  the right). *Lab* is for experiments: put things in the fly's world, do things to it, teach it,
+  activate or silence neurons, and switch body settings (left), with the motor, region and firing
+  panels (right).
 - **Senses** (left tab) drive real sensory neurons with Poisson spike trains: taste, Johnston's
   organ, olfactory, thermo- and hygrosensory neurons, leg touch, vision.
 - **Click any neuron** to see what it is, what it connects to, and to stimulate or silence it, with
@@ -183,8 +191,8 @@ itself (a 200 Hz oscillation of the flight muscles, shown slowed down).
 **Body buttons** (under the fly): *Physics* switches between the physical body and a kinematic one
 (joint angles straight from the muscles, movement estimated from leg sweeps; also used when MuJoCo
 isn't installed, or with `FLYBRAIN_BODY=kinematic`). *Leg feedback* connects or disconnects the
-legs' sense organs. *Rhythm* chooses where the leg rhythm comes from (below): *neurons*, *replay* or
-*off* (only what the connectome does by itself). *Re-centre* puts the fly back in the middle.
+legs' sense organs. *Walking* switches the stepping (below) on or off (off: only what the connectome
+does by itself). *Re-centre* puts the fly back in the middle.
 
 What the wiring produces, checked live and with `tools/validate.py`:
 
@@ -193,12 +201,12 @@ What the wiring produces, checked live and with `tools/validate.py`:
 | Sugar touched to the proboscis | proboscis extends and stays out | sugar taste neurons → ... → MN9 |
 | Sugar + bitter | feeding suppressed | bitter neurons inhibit the feeding pathway |
 | Threat from either side | escape jump, flight, landing a few mm away | LPLC2 → giant fibre → jump motor neuron (TTMn); LPLC2 → DNp06 → wing power motor neurons |
-| Activate P9 / MDN / DNa02 / aDN | steps / backs up / turns / grooms its antennae (how well depends on the rhythm setting: see the scores) | the command neurons you drove |
-| Warm air | steps, and flies off if it takes off | hot sensors → VP2 projection neurons → DNb05 → DNp31 → flight power motor neurons |
+| Activate P9 / MDN / DNa02 / aDN | walks forwards / backs up / turns that way / grooms its antennae | the command neurons you drove |
+| Warm air | walks out of a warm zone | hot sensors → VP2 projection neurons → descending neurons whose wiring reaches the legs' networks |
 | Sugar under the feet | the feet taste it, but the proboscis doesn't extend: in this model the tarsal taste signal doesn't reach MN9 (in real flies it does) | |
 | Small target darting ahead-left or right | turns towards it | LC10a → AOTU025 → DNa02 on that side, the pathway that steers male flies following a female (Ribeiro et al. 2018; Hindmarsh Sten et al. 2021) |
 | Fruit odour + Punish (or Reward) | that odour's Kenyon cell → output neuron synapses weaken; other odours' much less (see Learning) | ORNs → projection neurons → Kenyon cells; PPL1 (or PAM) dopamine at the output synapses |
-| Odours, humidity | the brain responds (antennal lobe, lateral horn, mushroom body); fruit odour sets the fly walking forwards, but it doesn't steer towards the source | |
+| Odours, humidity | the brain responds (antennal lobe, lateral horn, mushroom body); fruit ahead and CO₂ set the fly walking, but it doesn't steer by them | |
 | Antenna dust | leg twitches only; the touch → grooming pathway is too weak in this wiring to reach the aDN command neurons | |
 
 Three things to know:
@@ -209,32 +217,30 @@ Three things to know:
 - **Feet on the ground stop flight.** In real flies, tarsal contact inhibits flight. The body follows
   that rule: the flight motor only runs once no foot has touched the ground for 0.1 s (after a jump,
   or when lifted), for as long as the flight power motor neurons keep firing.
-- **Leg rhythms.** Stepping and grooming rhythms are made by nerve-cord circuits (central pattern
-  generators) that a leaky integrate-and-fire model doesn't produce by itself: with *Rhythm: off*
-  the command neurons only give twitches. Two ways to add them:
-  - **neurons** (default; `server/cpg.py`): each leg's rhythm generator is grown from the nerve cord's
-    own neurons. From the wiring: a *swing* group of excitatory premotor interneurons whose synapses
-    go mostly to that leg's lifting and forward-swinging motor neurons (e.g. IN21A010, IN19B012,
-    INXXX464), a *stance* group for pressing and pulling back (e.g. IN21A012, IN19A010, IN03A010),
-    and the inhibitory interneurons that link them (e.g. IN19A002, IN19A003). Their synapses onto the
-    motor neurons are the connectome's. Added, and only for these neurons: a second, faster
-    adaptation current that ends each burst; direct inhibition between the two groups, standing in for
-    the disynaptic inhibition the wiring shows (the spiking model doesn't drive those interneurons
-    hard enough to carry it); and the command neurons' drive, computed from the wiring (each
-    descending neuron's influence on each leg's rhythm neurons through up to three synapses) and
-    delivered in proportion to how fast they fire, because in the spiking model the signal fades out
-    across the nerve cord's layers. Which legs a command reaches is the wiring's: DNa02 drives its own
-    side's legs, MDN mostly the middle and hind legs, P9 hardly any directly. When a leg is driven,
-    its swing and stance groups alternate at 2–3 steps a second. It steps forwards only: backing up
-    would need the lift and the swing to change their timing, which this design doesn't do.
-  - **replay** (`server/data/skills_builtin.json`): skills learned by the skill engine on this same
-    connectome, made from a real fly's recorded steps (`tools/gaits.py`, `tools/learn_builtin.py`):
-    tripod gait at two steps a second, backwards the same step reversed, turning with the inner legs
-    stepping backwards. They drive the leg motor neurons directly and play while the brain's own
-    command neurons for them fire (P9 or DNg97, MDN, DNa01/DNa02). Grooming (aDN) is a replayed
-    skill in both modes.
-  Neurons driven by a skill don't count as commands, so a skill can't trigger itself, and neither
-  the rhythm neurons nor any skill may use a neuron that also drives the jump muscle.
+- **Walking** (`server/locomotion.py`). The nerve-cord circuits that generate stepping in a fly
+  (central pattern generators) aren't mapped yet, and a leaky integrate-and-fire model doesn't make
+  rhythms by itself (with *Walking: off* the command neurons only give twitches). What is known is how
+  the brain commands walking, so that part is the simulated brain's, and the stepping itself is
+  modelled the way NeuroMechFly does it:
+  - six leg oscillators in a tripod (front and hind legs of one side with the middle leg of the
+    other), each leg following a real fly's recorded step, all seven joints (NeuroMechFly's kinematic
+    recording, 7 steps a second at full speed here up to 6);
+  - every frame the brain sets the gait from its descending neurons: how fast (P9/DNg97 and MDN, plus
+    every descending neuron's wiring influence on the legs' premotor neurons), which way (MDN against
+    P9/DNg97; backwards is the step cycle run in reverse), and turning (DNa01/DNa02 left against
+    right; the legs on the inside of the turn take shorter strides, as Rayshubskiy et al. 2020 and
+    Yang et al. 2023 found); the walking fly also holds its course against turns it didn't command;
+  - each leg's premotor rhythm neurons, picked from the wiring (`server/cpg.py`: interneurons whose
+    synapses go mostly to that leg's swing or stance motor neurons), fire in time with its steps, and
+    through the connectome's own synapses so do its motor neurons;
+  - the feet's adhesive pads are off while stepping: in this physics, sticky feet make fast stepping
+    chaotic (the fly spins or tips over), while friction alone walks straight.
+
+  An earlier version grew the rhythm from those premotor neurons themselves (mutual inhibition and a
+  tiring current). They alternated, but the six legs didn't coordinate, the steps were weak and the fly
+  could only walk forwards. Another replayed motor-neuron drive learned from recorded steps; it drove
+  only 4 of each leg's 7 joints, so the hind legs dragged and turns went the wrong way. Grooming (aDN)
+  plays a built-in movement while the aDN neurons fire.
 
 The **Why?** card appears whenever the body starts a behaviour. It starts at the motor neurons (or
 command neurons) involved and walks backwards through the wiring: at each step, the cell type sending
@@ -292,66 +298,68 @@ where it should do nothing (stand still, not take off at a smell, not drink bitt
 network passes every control.
 
 ```bash
-uv run tools/benchmark.py                          # physical body, leg rhythms from neurons (~12 min)
-uv run tools/benchmark.py --rhythm replay          # rhythms replayed from recorded steps
-uv run tools/benchmark.py --rhythm off             # connectome only, no rhythm generators
+uv run tools/benchmark.py                          # physical body, walking on (~15 min)
+uv run tools/benchmark.py --rhythm off             # connectome only: no stepping model
 uv run tools/benchmark.py --variant shuffled       # control wiring (below)
 uv run tools/benchmark.py --ablate giant_fibre     # silence neurons: vision, mushroom_body, descending,
                                                    # giant_fibre, antennal_lobe, lateral_horn, or a cell type
 uv run tools/benchmark.py --only loom_left,learn_punish --repeats 1
 ```
 
-Results at the time of writing (physical body, leg feedback on; the last column is the connectome
-with every synapse's target reassigned at random, keeping each neuron's number of inputs and outputs,
-its transmitter and each synapse's strength):
+Results at the time of writing (physical body, leg feedback on). *Walking off* is the connectome
+without the stepping model; *shuffled* is the connectome with every synapse's target reassigned at
+random, keeping each neuron's number of inputs and outputs, its transmitter and each synapse's
+strength (and the leg networks and mushroom body re-read from that wiring):
 
-| Experiment | Real flies | Rhythm: neurons | replay | off | Shuffled wiring |
-|---|---|---|---|---|---|
-| Activate P9 (DNp09) | walk forwards (Bidaye et al. 2020) | 0.24 (+1.2 mm/s) | 0.27 | 0.00 | 0.00 |
-| Activate MDN | walk backwards (Bidaye et al. 2014) | 0.00 | 0.41 (−1.3 mm/s) | 0.00 | 0.00 |
-| Activate DNa02, left / right | turn that way (Rayshubskiy et al. 2020) | 0.01 / 0.00 | 0.00 / 0.00 | 0.01 / 0.00 | 0.02 / 0.00 |
-| Activate the giant fibre | escape jump within ms (von Reyn et al. 2014) | 1.00 | 1.00 | 1.00 | 0.00 |
-| Looming shadow, left / right | escape takeoff before contact | 1.00 / 0.87 | 1.00 / 1.00 | 0.67 / 1.00 | 0.00 / 0.00 |
-| Activate aDN (DNg62) | antennal grooming (Hampel et al. 2015) | 1.00 | 1.00 | 0.98 | 0.00 |
-| Dust on the antennae | antennal grooming (Seeds et al. 2014) | 0.08 | 0.08 | 0.00 | 0.00 |
-| Sugar on the proboscis | extension (Shiu et al. 2024) | 1.00 | 1.00 | 1.00 | 0.00 |
-| Sugar under the front feet | extension (Dethier 1976) | 0.00 | 0.00 | 0.00 | 0.00 |
-| Fruit odour 8 mm ahead-left | walks towards it | 0.50 (+1.6 mm closer) | 0.03 | 0.03 | 0.01 |
-| Fruit odour 8 mm ahead-right | walks towards it | 0.50 (+1.5 mm closer; separate run) | – | – | – |
-| CO₂ source ahead | moves away (Suh et al. 2004) | 0.01 | 0.00 | 0.00 | 0.00 |
-| Warm zone around it | leaves it (Simões et al. 2021) | 0.00 | 0.00 | 0.00 | 0.00 |
-| Stripes turning left | turns with them (optomotor) | 0.15 | 0.38 | 0.10 | 0.02 |
-| Small target darting ahead-left / right | turns towards it (Ribeiro et al. 2018) | 0.31 / 0.43 | 0.00 / 0.00 | 0.11 / 0.00 | 0.04 / 0.00 |
-| Fruit paired 3× with PPL1, CO₂ unpaired | paired odour's KC → MBON synapses weaken (Hige et al. 2015) | 1.00 (−82% vs −16%) | 1.00 | 1.00 | 0.00 |
-| The same with PAM (reward) | the same in reward compartments (Cohn et al. 2015) | 1.00 (−79% vs −11%) | 1.00 | 1.00 | 0.00 |
-| Fruit approach before / after punishment pairings | approaches less (Tully & Quinn 1985) | 0.17 (+1.9 → +1.6 mm, within noise) | 0.01 | 0.01 | 0.00 |
-| **Behaviours** (20) | | **0.44** | 0.41 | 0.35 | **0.00** |
-| **Controls** (8): no input; bitter on the proboscis or under the feet; fruit, geosmin, CO₂, heat, cold | stand still, don't feed, don't take off | **0.99** | 0.99 | 0.99 | 1.00 |
+| Experiment | Real flies | Walking on | Walking off | Shuffled |
+|---|---|---|---|---|
+| **Activating command neurons** | | | | |
+| P9 (DNp09) | walk forwards (Bidaye et al. 2020) | 0.84 (+4.2 mm/s) | 0.00 | 1.00 |
+| MDN | walk backwards (Bidaye et al. 2014) | 1.00 (−6.9 mm/s) | 0.00 | 1.00 |
+| DNa02, left / right | turn that way (Rayshubskiy et al. 2020) | 1.00 / 1.00 (0.84 rad/s) | 0.02 / 0.00 | 1.00 / 1.00 |
+| The giant fibre | escape jump within ms (von Reyn et al. 2014) | 1.00 | 1.00 | 0.00 |
+| aDN (DNg62) | antennal grooming (Hampel et al. 2015) | 1.00 | 0.97 | 1.00 |
+| **Senses → behaviour** | | | | |
+| Looming shadow, left / right | escape takeoff before contact | 1.00 / 1.00 | 1.00 / 1.00 | 0.00 / 0.00 |
+| Small target darting ahead-left / right | turns towards it (Ribeiro et al. 2018) | 1.00 / 0.51 (+76° / +13°) | 0.11 / 0.01 | 0.05 / 0.00 |
+| Sugar on the proboscis | extension (Shiu et al. 2024) | 1.00 | 1.00 | 0.00 |
+| Sugar under the front feet | extension (Dethier 1976) | 0.00 | 0.00 | 0.00 |
+| Dust on the antennae | antennal grooming (Seeds et al. 2014) | 0.08 | 0.00 | 0.00 |
+| Warm zone around it | walks out of it (Simões et al. 2021) | 1.00 | 0.00 | 0.00 |
+| CO₂ source ahead | moves away (Suh et al. 2004) | 0.00 (walks through it) | 0.00 | 0.00 |
+| Fruit odour 6 mm to the left / right | turns and walks towards it | 0.04 / 0.01 | 0.02 / 0.00 | 0.04 / 0.02 |
+| Stripes turning left | turns with them (optomotor) | 0.00 (turns against them) | 0.08 | 0.03 |
+| Fruit paired 3× with PPL1, CO₂ unpaired | paired odour's KC → MBON synapses weaken (Hige et al. 2015) | 1.00 (−81% vs −17%) | 1.00 | 0.00 |
+| The same with PAM (reward) | the same in reward compartments (Cohn et al. 2015) | 1.00 (−79% vs −12%) | 1.00 | 0.00 |
+| Fruit approach before / after punishment pairings | approaches less (Tully & Quinn 1985) | 0.01 | 0.00 | 0.04 |
+| **Controls** (8): no input; bitter on the proboscis or under the feet; fruit, geosmin, CO₂, heat, cold | stand still, don't feed, don't take off | 0.99 | 0.99 | 1.00 |
+| **Behaviours, activating command neurons** (6) | | **0.97** | 0.33 | 0.83 |
+| **Behaviours, from the senses** (15) | | **0.51** | 0.35 | **0.01** |
 
 What this says:
 
-- **The real wiring carries every behaviour.** With the same neurons, sensors, body and model
-  machinery, a degree-preserving shuffle of the connectome scores 0.00 on all 20 behaviours (and
-  still passes the controls, which is why they are scored separately).
-- **Ablations find the circuits where biology puts them**: silencing the 2 giant fibres abolishes
-  the jump to looming (real flies still escape without them, with slower "long-mode" takeoffs that
-  this model lacks); silencing the visual projection neurons abolishes escape, optomotor turning and
-  target following but not the giant fibre's own jump or feeding; silencing the Kenyon cells abolishes
-  learning. Removing all inhibition makes the network seize (sugar on the proboscis sets 28,000
-  neurons firing within 0.1 s instead of 185) and the fly thrashes across the arena with no input at
-  all; it simulates at 1% of real time, so that variant is only run on a few experiments.
-- **Fruit "approach" is odour-evoked walking, not steering.** The fly gets as much closer to a source
-  on its right as on its left, because smelling fruit makes it walk forwards and a source ahead gets
-  nearer either way. It survives silencing the Kenyon cells (0.46) or the lateral horn (0.64), so in
-  this wiring it takes some other route.
-- **Movement is the weak part.** Command neurons drive the leg rhythm generators, but walking is
-  slow (a fifth of a real fly's speed), backing up works only with replayed steps, and turning is
-  close to zero or the wrong way: DNa02 reaches its own side's legs in the wiring, but the rhythm
-  generators only make forward steps, and the replayed turning steps (made for a fly on a ball)
-  turn the free fly the wrong way. Turning to stripes or a target works only weakly for that reason.
-- **Learning works in the synapses, not yet in behaviour** (see Learning in the mushroom body).
-- Tarsal sugar doesn't reach the proboscis motor neurons, antennal dust doesn't reach the grooming
-  command neurons, and CO₂ and heat don't produce avoidance in this wiring and model.
+- **Walking works.** The command neurons make the fly walk forwards, back up and turn either way, at
+  4-7 mm/s and about 0.8 rad/s, and it turns towards a moving target through LC10a → AOTU025 →
+  DNa02, the pathway that steers male flies after a female.
+- **The real wiring carries everything the fly senses.** With the same neurons, sensors, body and
+  model machinery, the shuffled wiring scores 0.01 on the 15 behaviours that start at a sense organ,
+  against 0.51 for the connectome. Activating a command neuron directly still makes the shuffled fly
+  walk, turn and groom, because the stepping and grooming models read those neurons themselves; the
+  giant fibre's jump, which goes through the nerve cord's wiring, fails.
+- **Ablations find the circuits where biology puts them**: silencing the 2 giant fibres abolishes the
+  jump to a looming shadow (real flies still escape without them, with slower "long-mode" takeoffs,
+  and here the fly runs instead); silencing the visual projection neurons abolishes escape and
+  target following but not the giant fibre's own jump or feeding; silencing the Kenyon cells
+  abolishes learning and nothing else tested (escape 5 of 5, feeding). Removing all inhibition makes
+  the network seize (sugar on the proboscis sets 28,000 neurons firing within 0.1 s instead of 185)
+  and the fly thrashes across the arena with no input at all.
+- **What the wiring doesn't do in this model**, and so the fly doesn't either: odours set it walking
+  (fruit ahead, CO₂) but it doesn't steer by them, towards fruit or away from CO₂; turning stripes
+  make it turn the wrong way, because in the simulation the right-side motion-sensing neurons (HS
+  cells) respond to both directions and the right DNa02 fires either way; sugar under the feet
+  reaches the proboscis motor neuron only through links carrying 0.5-1.4% of each next neuron's input;
+  antennal dust reaches the grooming command neurons only through three weak steps. Learning changes
+  the synapses but not yet the behaviour (see Learning in the mushroom body).
 
 ## Skills: teaching the fly new movements
 
@@ -381,8 +389,10 @@ hi"). It works like this (`server/skills.py`):
    git): the driver neurons (with their BANC ids), their firing schedule, the plan and the score.
 
 After that, `do_skills` just replays the stored drive: no search, no practice. To type a word, Fly
-learns one small tap skill per leg once, then chains them. The built-in walking, turning and grooming
-skills are listed too, and Fly can use them like its own.
+learns one small tap skill per leg once, then chains them. The built-in skills are listed too, and Fly
+can use them like its own: walking forwards and backwards and turning left and right activate those
+command neurons (P9, MDN, DNa02 left or right) for a second and the legs step as the brain commands;
+grooming its antennae is a learned movement.
 
 This is the same idea as the KV cache, one level down: work that is expensive the first time is
 kept and reused. And the skill list is deliberately not in the LLM's system prompt. Every new skill
@@ -611,7 +621,8 @@ POST http://localhost:8765/api/command
                                                      # stop, reset ("home": true re-centres the fly)
 {"cmd": "body",   "action": "physics", "on": true}     # physical or kinematic body
 {"cmd": "body",   "action": "feedback", "gain": 1}     # legs' sense organs -> nerve cord (0 = off)
-{"cmd": "body",   "action": "rhythm", "mode": "neurons"} # leg rhythms: neurons | replay | off
+{"cmd": "body",   "action": "rhythm", "mode": "neurons"} # walking: neurons (on) | off
+{"cmd": "ablate", "group": "vision", "on": true}       # silence a neuron group or a cell type (false: restore)
 {"cmd": "body",   "action": "fruit"}                   # put something in the world near the fly: sugar,
                                                      # bitter, fruit, co2, geosmin, cva, heat, cold,
                                                      # humid, dry, loom (side), stripes (side), clear;
@@ -654,7 +665,8 @@ server/connectome.py   downloads + packs the BANC connections (first run)
 server/motor.py        motor neurons -> muscles -> joint targets and stiffness
 server/physics.py      the physical body in its arena (MuJoCo, NeuroMechFly)
 server/arena.py        the world: food, odours, air, threats, targets, stripes -> sensory neurons
-server/cpg.py          the legs' rhythm generators, grown from nerve-cord neurons
+server/locomotion.py   walking: leg oscillators and recorded steps, commanded by descending neurons
+server/cpg.py          the legs' premotor rhythm neurons from the wiring, and descending drive to them
 server/feedback.py     the legs' sense organs -> sensory neurons
 server/plasticity.py   learning: dopamine-gated plasticity of the mushroom body's synapses
 server/calibration.py  keeps odours distinct in the antennal lobe and mushroom body
@@ -676,8 +688,7 @@ tools/benchmark.py     scores the model against published experiments
 tools/validate.py      checks known behaviours and which body parts each input moves
 tools/build_proprio.py finds each leg's sense organs in BANC (needs the BANC annotation file)
 tools/build_senses.py  finds the sensory neurons the world reaches, by side and by leg (same)
-tools/gaits.py         walking and turning plans from a real fly's recorded steps
-tools/learn_builtin.py relearns the built-in skills on the connectome
+tools/learn_builtin.py relearns the built-in grooming skill on the connectome
 tools/build_body.py    rebuilds web/data/fly_body.* from the flygym package
 tools/mock_llm.py      a scripted fake model server for testing the agent without a download
 

@@ -104,7 +104,8 @@ class SkillEngine:
         for builtin, lib in ((False, self.lib), (True, self.builtin)):
             out += [{"name": k, "description": v.get("description", ""), "score": v.get("score"),
                      "duration": v.get("duration"), "learned": v.get("learned"), "uses": v.get("uses", 0),
-                     "builtin": builtin, "levels": sorted({d["level"] for d in v.get("drivers", [])})}
+                     "builtin": builtin, "levels": sorted({d["level"] for d in v.get("drivers", [])}),
+                     "command": bool(v.get("command"))}
                     for k, v in sorted(lib.items()) if not (builtin and k in self.lib)]
         return out
 
@@ -262,9 +263,9 @@ class SkillEngine:
             if dr.get("rates") is None:
                 dr["rates"] = self._initial_rates(dr, tracks).round(0).tolist()
 
-    def start(self, kind, name, drivers, tracks, duration, attempt=None):
+    def start(self, kind, name, drivers, tracks, duration, attempt=None, command=False):
         self._schedule(drivers, tracks, duration)
-        self.state = {"kind": kind, "name": name, "t": 0.0, "duration": duration + 0.35, "drivers": drivers,
+        self.state = {"kind": kind, "name": name, "t": 0.0, "duration": duration + 0.35, "drivers": drivers, "command": command,
                       "tracks": tracks, "rec": {k: [] for k in self.m.controls}, "attempt": attempt, "last": None, "ball": []}
         self.done = asyncio.Event()
         neurons = sorted({n for d in drivers for n in d["neurons"]})
@@ -328,7 +329,7 @@ class SkillEngine:
         duration, tracks = self.parse_plan(sk["plan"])
         drivers = [dict(d, neurons=list(d["neurons"]), rates=list(d["rates"]), level_i=LEVELS.index(d["level"]))
                    for d in sk["drivers"]]
-        self.start("reflex", name, drivers, tracks, duration)
+        self.start("reflex", name, drivers, tracks, duration, command=bool(sk.get("command")))
         self.state["duration"] = duration          # no settling pause: the next cycle follows straight on
         return True
 
@@ -503,7 +504,8 @@ class SkillEngine:
                   "apart; the engine samples every 20 ms and compares what the muscles did with your plan.",
                   "  Plans are linear between keyframes; a control not mentioned stays 0 (relaxed); a control keeps its "
                   "last value after its last keyframe, so return it to 0 explicitly.",
-                  "  This body's built-in walk: 2 steps per second (what the neural drive can follow reliably).",
+                  "  Walking and turning are not skills to plan: do_skills walk_forward / walk_backward / turn_left / "
+                  "turn_right activate the command neurons and the legs step as the brain commands (up to 6 steps a second).",
                   "",
                   "PHYSICS (the body stands and walks on the ground under gravity, with friction and sticky foot pads):",
                   "  A foot pushes the body only while it is down and pressing (lift <= 0); lift it (lift > 0.3) to swing "
@@ -515,7 +517,7 @@ class SkillEngine:
                   "check a movement had the physical effect you wanted, and refine_skill if not.",
                   "",
                   "WORKED EXAMPLES (built-in skills, learned on this connectome):"]
-        for name in ("walk_forward", "groom_antennae"):
+        for name in ("groom_antennae",):
             sk = self.builtin.get(name)
             if sk:
                 kf = sk["plan"]["keyframes"]
@@ -627,10 +629,14 @@ class SkillEngine:
                     duration, tracks = self.parse_plan(sk["plan"])
                     drivers = [dict(d, neurons=list(d["neurons"]), rates=list(d["rates"]), level_i=LEVELS.index(d["level"]))
                                for d in sk["drivers"]]
-                    self.start("play", name, drivers, tracks, duration)
+                    self.start("play", name, drivers, tracks, duration, command=bool(sk.get("command")))
                     await self.done.wait()
-                    score, *_ = self.evaluate(self.result, tracks, duration)
-                    done.append((name, round(score, 2)))
+                    if sk.get("command"):            # a command skill: what counts is how the fly moved
+                        b = self.ball_summary(self.result) or {}
+                        done.append((name, f"{b.get('forward_mm_s', 0):+.1f} mm/s, turning {b.get('turn_left_rad_s', 0):+.2f} rad/s (+ left)"))
+                    else:
+                        score, *_ = self.evaluate(self.result, tracks, duration)
+                        done.append((name, round(score, 2)))
                     sk["uses"] = sk.get("uses", 0) + 1
             self._save()
             return {"ok": True, "performed": done}

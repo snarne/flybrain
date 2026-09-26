@@ -1,16 +1,14 @@
 """
-(Re)learn the built-in movements: find the neurons to drive for each, on the live connectome, and
-store them in server/data/skills_builtin.json (shipped with the app, so nobody has to wait for this).
+(Re)learn the built-in movements that are learned skills (grooming its antennae): find the neurons to
+drive for each, on the live connectome, from the plan stored for it, and store them in
+server/data/skills_builtin.json (shipped with the app, so nobody has to wait for this).
 
-    uv run tools/learn_builtin.py                     # walk_forward, walk_backward, turn_left, turn_right
+    uv run tools/learn_builtin.py                     # every learned built-in
     uv run tools/learn_builtin.py groom_antennae      # or name the ones to redo
 
-The gaits come from a real fly's recorded steps (tools/gaits.py). They are the stand-in for the nerve
-cord's own rhythm generators (central pattern generators), which the model can't produce yet, so they
-are learned at the level those circuits act on: the leg motor neurons. (Driving from descending neurons
-spreads to too many other muscles for 30 controls at once.) Learning runs on the default body (physical,
-with the legs' sense organs feeding back, as the app uses it) and takes a few minutes. Other built-ins
-are relearned from the plan already stored for them, at any level.
+The walking and turning built-ins aren't learned: they activate the command neurons (P9, MDN, DNa02)
+and the legs step as the brain commands (server/locomotion.py). Learning runs on the default body
+(physical, with the legs' sense organs feeding back, as the app uses it) and takes a few minutes.
 """
 import asyncio
 import json
@@ -24,7 +22,6 @@ sys.path.insert(0, str(ROOT / "server"))
 sys.path.insert(0, str(ROOT / "tools"))
 os.environ.setdefault("NO_BROWSER", "1")
 
-import gaits  # noqa: E402
 
 ATTEMPTS = 12
 DT = 1.0 / 30
@@ -51,14 +48,13 @@ async def main(names):
     builtin_path = ROOT / "server" / "data" / "skills_builtin.json"
     builtin = json.loads(builtin_path.read_text())
     for name in names:
-        if name in gaits.DESCRIPTIONS:
-            desc, plan = gaits.DESCRIPTIONS[name], gaits.plan(name)
-        else:
-            desc, plan = builtin[name]["description"], builtin[name]["plan"]
+        if builtin.get(name, {}).get("command"):
+            print(name, "activates command neurons: nothing to learn", flush=True)
+            continue
+        desc, plan = builtin[name]["description"], builtin[name]["plan"]
         t = time.time()
         sk.lib.pop(name, None)
-        levels = ("motor",) if name in gaits.DESCRIPTIONS else None
-        res = await sk.learn(name, desc, plan, attempts=ATTEMPTS, levels=levels)
+        res = await sk.learn(name, desc, plan, attempts=ATTEMPTS)
         if not res.get("ok"):
             print(name, "failed:", res.get("error"), flush=True)
             continue
@@ -75,4 +71,5 @@ async def main(names):
 
 
 if __name__ == "__main__":
-    asyncio.run(main(sys.argv[1:] or list(gaits.DESCRIPTIONS)))
+    stored = json.loads((ROOT / "server" / "data" / "skills_builtin.json").read_text())
+    asyncio.run(main(sys.argv[1:] or [k for k, v in stored.items() if not v.get("command")]))

@@ -34,7 +34,7 @@ EXPERIMENTS = {
 }
 MODE_TEXT = {"rest": "resting", "legs": "moving its legs", "walk": "walking", "groom": "grooming its antennae",
              "feed": "feeding (proboscis out)", "jump": "escape jump", "fly": "flying", "skill": "doing a skill",
-             "reflex": "stepping (replayed rhythm)"}
+             "reflex": "grooming (built-in movement)"}
 
 
 def _fn(name, description, props, required=()):
@@ -139,7 +139,7 @@ TOOLS = [
         ["name", "description", "keyframes"]),
     _fn("motor_reference", "Everything you need to plan an accurate movement: every motor control and what it "
         "moves, how far each leg joint can go (degrees), how fast real flies move, and the keyframe timelines of "
-        "the built-in skills (walking, turning, grooming) as worked examples. Read it before planning a new skill.", {}),
+        "the built-in grooming skill as a worked example (walking and turning are do_skills walk_forward, walk_backward, turn_left, turn_right: they activate command neurons). Read it before planning a new skill.", {}),
     _fn("refine_skill", "Improve a learned skill with a corrected plan (e.g. after comparing the planned vs achieved "
         "timeline learn_skill returned). Keeps the neurons already found and practises again; the better version is kept.",
         {"name": {"type": "string"}, "keyframes": {"type": "array", "items": {"type": "object"}},
@@ -529,7 +529,8 @@ class ToolRunner:
         r = await eng.perform(list(names), repeat)
         if not r.get("ok"):
             return f"Couldn't: {r.get('error')}", False, {}
-        return f"Done: {', '.join(f'{n} ({s})' for n, s in r['performed'])} (numbers: how closely the muscles followed the plan).", True, {}
+        return (f"Done: {', '.join(f'{n} ({s})' for n, s in r['performed'])} (numbers: how closely the muscles followed "
+                "the plan; for walking and turning, which activate command neurons, how the fly moved)."), True, {}
 
     async def t_motor_reference(self):
         eng = getattr(self.world, "skills", None)

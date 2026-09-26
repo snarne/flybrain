@@ -23,7 +23,7 @@ export async function createFlyView(dom) {
   camera.up.set(0, 0, 1);
   camera.position.set(6.5, 7.5, 4.2);
   const controls = new OrbitControls(camera, dom);
-  controls.target.set(-0.4, 0, 0.9);
+  controls.target.set(0, 0, 0.5);
   controls.enableDamping = true;
   controls.minDistance = 3;
   controls.maxDistance = 120;
@@ -35,6 +35,12 @@ export async function createFlyView(dom) {
   const rim = new THREE.DirectionalLight(0x88aaff, 1.2);
   rim.position.set(-8, -4, 3);
   scene.add(rim);
+  // a soft light from the viewer, so the side of the fly facing the camera is never in the dark
+  // (the fly turns; the lights above don't)
+  const head = new THREE.DirectionalLight(0xffffff, 0.9);
+  head.position.set(0, 0, 1);
+  camera.add(head);
+  scene.add(camera);
 
   // ---------------------------------------------------------------- the arena: floor, walls, stripes
   const ARENA = 40;                                  // half-width (mm), as server/physics.py
@@ -154,6 +160,7 @@ export async function createFlyView(dom) {
   const nodes = {};
   const mats = {};
   const baseQuat = {};
+  const EYE_GLOW = 0x2a0503;     // compound eyes have their own red sheen, whichever way the light falls
   function colourFor(name) {
     if (/Eye/.test(name)) return { color: 0x9c1b12, roughness: 0.35, metalness: 0.1 };
     if (/Wing/.test(name)) return { color: 0xd9e4ff, roughness: 0.2, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false };
@@ -360,7 +367,7 @@ export async function createFlyView(dom) {
     }
 
     // muscle glow
-    for (const mat of Object.values(mats)) mat.emissive.setRGB(0, 0, 0);
+    for (const [name, mat] of Object.entries(mats)) mat.emissive.setHex(/Eye/.test(name) ? EYE_GLOW : 0);
     if (glowOn) {
       const P = st.parts || {};
       for (const [key, list] of Object.entries(glowGroups)) {
@@ -379,7 +386,7 @@ export async function createFlyView(dom) {
       else fly.position.lerp(target, Math.min(1, dt * 20));
       const q = pose.quat;
       fly.quaternion.slerp(new THREE.Quaternion(q[1], q[2], q[3], q[0]), Math.min(1, dt * 20));
-      const follow = new THREE.Vector3(fly.position.x - 0.4, fly.position.y, Math.max(0.9, fly.position.z + 1.0));
+      const follow = new THREE.Vector3(fly.position.x, fly.position.y, Math.max(0.35, fly.position.z + 0.9));   // the thorax
       const shift = follow.clone().sub(controls.target);
       controls.target.add(shift);
       camera.position.add(shift);

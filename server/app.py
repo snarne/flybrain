@@ -14,10 +14,12 @@ The body: motor.py (motor neurons -> muscles -> joints), body.py (stimuli, what 
 skills.py (learning new movements by finding which neurons to drive).
 """
 import asyncio
+import faulthandler
 import json
 import os
 import struct
 import time
+import traceback
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -38,6 +40,20 @@ DATA = Path(__file__).parent / "data"
 # Keep downloads (e.g. Laya's checkpoint) inside the project folder even when not started via run.sh
 os.environ.setdefault("HF_HOME", str(ROOT / ".cache" / "huggingface"))
 os.environ.setdefault("TORCH_HOME", str(ROOT / ".cache" / "torch"))
+
+# a record of what went wrong, if anything does: Python errors, and hard crashes (faulthandler also
+# catches those in MuJoCo or numba, which would otherwise take the server down without a word)
+LOG_DIR = ROOT / "data" / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+_crash_log = open(LOG_DIR / "server.log", "a", buffering=1)
+faulthandler.enable(file=_crash_log, all_threads=True)
+
+
+def log_error(where, exc=None):
+    """Print an error and keep it in data/logs/server.log."""
+    text = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {where}\n" + (traceback.format_exc() if exc is not None else "")
+    print(text, flush=True)
+    _crash_log.write(text + "\n")
 
 FPS = 30
 STATUS_EVERY = 6          # frames
@@ -76,6 +92,7 @@ class World:
             self.readout_of[r["neurons"]] = k
         self.ro_sizes = np.array([max(len(r["neurons"]), 1) for r in self.readouts], float)
         self.ro_fast = np.zeros(len(self.readouts))
+        self.ro_all = np.zeros(len(self.readouts))
         # motor neurons -> muscles -> joints
         self.motor = motor_mod.Motor(self)
         self.skill_driven = np.zeros(self.N, bool)
@@ -138,6 +155,8 @@ class World:
             i = int(c["idx"])
             (self.blocked.add if c.get("on", True) else self.blocked.discard)(i)
             self._push_blocked()
+        elif cmd == "ablate":                    # {"cmd":"ablate","group":"vision","on":true} (a group or a cell type)
+            self.ablate(str(c.get("group", "")), bool(c.get("on", True)))
         elif cmd == "clear":                     # all inputs off
             self.active_presets.clear()
             self.neuron_stim.clear()
@@ -228,8 +247,12 @@ class World:
         self.wiring = (ip, ix, w)
         self.brain.set_connectome(ip, ix, w)
         self.brain.mode = "stable"
-        if getattr(self, "cpg", None) is not None and self.cpg.on:
-            self.cpg.enable(True)
+        if getattr(self, "cpg", None) is not None:         # re-read the legs' networks from the new wiring
+            from cpg import CPG
+            on = self.cpg.on
+            self.cpg.enable(False)
+            self.cpg = CPG(self)
+            self.cpg.enable(on)
         if getattr(self, "mb", None) is not None:
             self.mb.rewire()
         self.apply_command({"cmd": "reset"})
@@ -259,7 +282,11 @@ class World:
     # ------------------------------------------------------------ run one frame
     def frame(self, sim_ms):
         while self.pending:
-            self.apply_command(self.pending.popleft())
+            c = self.pending.popleft()
+            try:
+                self.apply_command(c)
+            except Exception as e:
+                log_error(f"command failed: {str(c)[:200]}: {type(e).__name__}: {e}", e)
         if self.paused:
             return None
         t0 = time.perf_counter()
@@ -272,8 +299,13 @@ class World:
         reg = np.bincount(self.region[spk], minlength=self.n_regions)
         ro = self.readout_of[spk[~self.skill_driven[spk]]]
         ro = np.bincount(ro[ro >= 0], minlength=len(self.readouts))
+        ra = self.readout_of[spk]
+        ra = np.bincount(ra[ra >= 0], minlength=len(self.readouts))
         a = np.exp(-sim_ms / 60.0)  # ~60 ms smoothing for the body's motor readout
         self.ro_fast = a * self.ro_fast + (1 - a) * ro / self.ro_sizes / (sim_ms / 1000.0)
+        # the same including neurons a skill drives: the nerve cord's walking circuits hear every
+        # command neuron, whoever drives it (the walking and turning skills activate them)
+        self.ro_all = a * self.ro_all + (1 - a) * ra / self.ro_sizes / (sim_ms / 1000.0)
         self.motor.update(spk, sim_ms / 1000.0)
         if getattr(self, "cpg", None) is not None:
             self.cpg.update(spk, sim_ms / 1000.0)
@@ -314,11 +346,15 @@ class World:
             "regions": [{"hz_total": round(float(reg[i]), 1), "hz_per_neuron": round(float(reg[i] / counts[i]), 3)} for i in range(self.n_regions)],
             "behaviours": behaviours,
             "top": [self.brief(int(i)) | {"hz": round(float(self.rate[i]), 1)} for i in top if self.rate[i] > 0.5],
+            "ablated": sorted(self.ablated),
             "inputs": {"presets": self.active_presets, "neurons": len(self.neuron_stim), "blocked": sorted(self.blocked)[:200],
                        "channels": sorted(self.channel_stim)},
             "runaway": bool(not self.active_presets and not self.neuron_stim and not self.channel_stim
                             and (self.rate > 1.0).sum() > 2000),
         }
+
+    def all_readouts(self):
+        return {r["key"]: float(v) for r, v in zip(self.readouts, self.ro_all)}
 
     def fast_readouts(self):
         return {r["key"]: float(self.ro_fast[k]) for k, r in enumerate(self.readouts)}
@@ -478,7 +514,16 @@ skills = SkillEngine(world, world.motor, lambda m: emit(m))
 world.skills = skills
 
 
+body_queue = deque()
+
+
 def handle_body_command(c):
+    """Body commands wait for the start of the next frame: the physics runs in a worker thread, and
+    resetting or rebuilding it mid-step would crash MuJoCo."""
+    body_queue.append(c)
+
+
+def _do_body_command(c):
     a = c.get("action")
     if a == "physics":                       # {"cmd":"body","action":"physics","on":true}
         body.set_physics(bool(c.get("on", True)))
@@ -752,9 +797,13 @@ async def ws(sock: WebSocket):
         for ev in list(agent.pending_approvals.values()):
             await sock.send_text(json.dumps(ev))
         while True:
-            c = json.loads(await sock.receive_text())
-            if not await handle_agent_command(c):
-                world.pending.append(c)
+            raw = await sock.receive_text()
+            try:                             # a bad command is logged, and the connection stays up
+                c = json.loads(raw)
+                if not await handle_agent_command(c):
+                    world.pending.append(c)
+            except Exception as e:
+                log_error(f"command failed: {raw[:200]}: {type(e).__name__}: {e}", e)
     except WebSocketDisconnect:
         pass
     finally:
@@ -775,42 +824,51 @@ async def run_loop():
     n = 0
     while True:
         t0 = time.perf_counter()
-        sim_ms = world.speed * frame_s * 1000.0
-        if not world.paused:
-            body.sense(sim_ms / 1000.0)
-            skills.tick(sim_ms / 1000.0)
-        # the brain and the physical body run side by side: the body plays out the last frame's muscle
-        # commands while the brain computes the next frame
-        tc = time.perf_counter()
-        brain = loop.run_in_executor(None, world.frame, sim_ms)
-        if body.phys is not None and not world.paused:
-            await loop.run_in_executor(None, body.physics_step, sim_ms / 1000.0)
-        spk = await brain
-        if body.phys is not None and spk is not None:
-            world.sim_ratio = 0.8 * world.sim_ratio + 0.2 * (sim_ms / 1000.0) / max(time.perf_counter() - tc, 1e-6)
-        if spk is not None:
-            skills.observe(sim_ms / 1000.0)
-            body.act(sim_ms / 1000.0, world.motor, world.fast_readouts(), skill=skill_brief())
-        if bridge is not None:
-            bridge.tick(world.brain.t_ms)
-        n += 1
-        if clients:
-            msgs = []
-            if spk is not None:
-                msgs.append(struct.pack("<dI", world.brain.t_ms, len(spk)) + spk.astype(np.uint32).tobytes())
-            if spk is not None:
-                msgs.append(json.dumps(body.state(skill_brief())))
-            if n % STATUS_EVERY == 0:
-                msgs.append(json.dumps(world.status()))
-            for c in list(clients):
+        try:
+            sim_ms = world.speed * frame_s * 1000.0
+            while body_queue:
                 try:
-                    for m in msgs:
-                        if isinstance(m, bytes):
-                            await c.send_bytes(m)
-                        else:
-                            await c.send_text(m)
-                except Exception:
-                    clients.discard(c)
+                    _do_body_command(body_queue.popleft())
+                except Exception as e:          # a bad command must never stop the simulation
+                    log_error(f"body command failed: {type(e).__name__}: {e}", e)
+            if not world.paused:
+                body.sense(sim_ms / 1000.0)
+                skills.tick(sim_ms / 1000.0)
+            # the brain and the physical body run side by side: the body plays out the last frame's muscle
+            # commands while the brain computes the next frame
+            tc = time.perf_counter()
+            brain = loop.run_in_executor(None, world.frame, sim_ms)
+            if body.phys is not None and not world.paused:
+                await loop.run_in_executor(None, body.physics_step, sim_ms / 1000.0)
+            spk = await brain
+            if body.phys is not None and spk is not None:
+                world.sim_ratio = 0.8 * world.sim_ratio + 0.2 * (sim_ms / 1000.0) / max(time.perf_counter() - tc, 1e-6)
+            if spk is not None:
+                skills.observe(sim_ms / 1000.0)
+                body.act(sim_ms / 1000.0, world.motor, world.fast_readouts(), skill=skill_brief())
+            if bridge is not None:
+                bridge.tick(world.brain.t_ms)
+            n += 1
+            if clients:
+                msgs = []
+                if spk is not None:
+                    msgs.append(struct.pack("<dI", world.brain.t_ms, len(spk)) + spk.astype(np.uint32).tobytes())
+                if spk is not None:
+                    msgs.append(json.dumps(body.state(skill_brief())))
+                if n % STATUS_EVERY == 0:
+                    msgs.append(json.dumps(world.status()))
+                for c in list(clients):
+                    try:
+                        for m in msgs:
+                            if isinstance(m, bytes):
+                                await c.send_bytes(m)
+                            else:
+                                await c.send_text(m)
+                    except Exception:
+                        clients.discard(c)
+        except Exception as e:             # one bad frame must never stop the simulation
+            log_error(f"simulation frame failed: {type(e).__name__}: {e}", e)
+            await asyncio.sleep(0.2)
         await asyncio.sleep(max(0.0, frame_s - (time.perf_counter() - t0)))
 
 

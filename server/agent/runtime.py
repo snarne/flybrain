@@ -53,6 +53,31 @@ RUNTIME = ROOT / "runtime" / PROFILE
 MODELS_DIR = ROOT / "models"
 KV_DIR = ROOT / "data" / "kv" / PROFILE
 LOG_DIR = ROOT / "data" / "logs"
+PID_FILE = LOG_DIR / "llama-server.pid"
+
+
+def _kill_pid(pid):
+    """Stop a process by id (only ever the llama-server this app started, and only if that id is still a
+    llama-server: ids get reused)."""
+    try:
+        if sys.platform != "win32":
+            name = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True, timeout=5).stdout
+        else:
+            name = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True, timeout=10,
+                                  creationflags=subprocess.CREATE_NO_WINDOW).stdout
+        if "llama" not in name.lower():
+            return
+    except Exception:
+        return
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, timeout=10,
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            import signal
+            os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
 CONFIG = ROOT / "llm_config.json"
 SETTINGS = ROOT / "data" / "settings" / f"{PROFILE}.json"
 PINNED_TAG = "b11163"  # the llama.cpp build this app was tested with
@@ -142,6 +167,7 @@ class Runtime:
         self.detail = ""
         self.progress = None         # {"done": bytes, "total": bytes}
         self.proc = None
+        self.adopted = None          # pid of a llama-server left running by an earlier run, now reused
         self.hw = {"os": sys.platform, "arch": platform.machine(), "ram_gb": round(system_ram_gb(), 1), "gpus": []}
         self.asset, self.backend = build_asset()
         self.server_bin = self._find_server()
@@ -422,6 +448,13 @@ class Runtime:
                 self.install_engine()
             if not custom and not self.model_installed(key):
                 self.download_model(key)
+            if self.proc is None and self.adopted is None and self._adopt_orphan(key):
+                # still running from before a restart: use it
+                self.model_key = key
+                if not custom:
+                    self.model_path = self._local_model(key)
+                self.state, self.detail = "ready", f"{label} running on {self._device_summary()}"
+                return
             self.stop()
             self.state, self.detail = "starting", (f"Fetching {label} from Hugging Face (first time only) and loading it"
                                                    if hf else f"Loading {label} into memory")
@@ -448,6 +481,7 @@ class Runtime:
             env = dict(os.environ, LLAMA_CACHE=str(ROOT / "models" / "hf"))   # -hf downloads stay in this folder
             self.proc = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, cwd=self.server_bin.parent,
                                          creationflags=flags, env=env)
+            PID_FILE.write_text(f"{self.proc.pid} {key}")
             t0 = time.time()
             while time.time() - t0 < (6 * 3600 if hf else 900):
                 if self.proc.poll() is not None:
@@ -492,4 +526,34 @@ class Runtime:
                 self.proc.wait(10)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+        elif self.adopted:
+            _kill_pid(self.adopted)
         self.proc = None
+        self.adopted = None
+        PID_FILE.unlink(missing_ok=True)
+
+    def _adopt_orphan(self, key):
+        """If the app stopped without stopping its llama-server (a crash), that server still holds the
+        port and the model's memory. Reuse it when it has the model wanted, else stop it."""
+        try:
+            pid, old_key = PID_FILE.read_text().split()[:2]
+            pid = int(pid)
+        except Exception:
+            return False
+        try:
+            with urllib.request.urlopen(self.base_url + "/health", timeout=2) as r:
+                healthy = json.load(r).get("status") == "ok"
+        except Exception:
+            healthy = False
+        if healthy and old_key == key:
+            self.adopted = pid
+            return True
+        _kill_pid(pid)
+        PID_FILE.unlink(missing_ok=True)
+        for _ in range(40):                     # wait for the port to be free
+            try:
+                urllib.request.urlopen(self.base_url + "/health", timeout=1)
+                time.sleep(0.25)
+            except Exception:
+                break
+        return False

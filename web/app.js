@@ -78,18 +78,14 @@ function layout() {
   if (rects.fly && flyView) {
     const { w, h } = rects.fly, cam = flyView.camera, a = w / h;
     cam.aspect = a;
-    // keep the whole fly in frame in tall/narrow views, and centre it in the space above the experiment bar
+    // keep the whole fly in frame in tall/narrow views
     cam.fov = a < 1.5 ? 2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(13)) * 1.5 / a) * 180 / Math.PI : 26;
-    const bar = viewFly.querySelector('.experiments').offsetHeight || 0;
-    cam.setViewOffset(w, h, 0, (bar - 10) / 2, w, h);
+    cam.clearViewOffset();
     cam.updateProjectionMatrix();
   }
   // the "why" card sits over the brain whenever the brain is on screen, where its pathway lights up
   const card = document.getElementById('decision'), home = rects.brain ? viewBrain : viewFly;
   if (card.parentElement !== home) home.append(card);
-  // over the fly, keep the card clear of the experiment buttons
-  card.style.maxHeight = home === viewFly && rects.fly
-    ? Math.max(90, rects.fly.h - (viewFly.querySelector('.experiments').offsetHeight || 0) - 40) + 'px' : '';
   document.querySelectorAll('.viewmode [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === viewMode));
 }
 function resize() {
@@ -379,7 +375,13 @@ const topRows = Array.from({ length: 10 }, () => {
   topEl.append(d);
   return d;
 });
+// silence (ablate) groups of neurons: the server keeps them silenced until switched back
+const ablateBtns = [...document.querySelectorAll('[data-ablate]')];
+let ablated = [];
+ablateBtns.forEach(b => b.onclick = () => send({ cmd: 'ablate', group: b.dataset.ablate, on: !ablated.includes(b.dataset.ablate) }));
 function onStatus(s) {
+  ablated = s.ablated || [];
+  ablateBtns.forEach(b => b.classList.toggle('on', ablated.includes(b.dataset.ablate)));
   const achieved = Math.min(s.speed, s.sim_ratio);
   document.getElementById('t-ratio').textContent = achieved >= s.speed * 0.95 ? `${s.speed}× real time` : `${achieved.toFixed(2)}× real time (CPU-limited)`;
   document.getElementById('t-firing').textContent = `${s.firing.toLocaleString()} neurons firing`;
@@ -594,6 +596,7 @@ function onBody(b) {
     bits.push(`${feet}/6 feet down · ${fwd >= 0 ? '+' : ''}${fwd.toFixed(1)} mm/s${Math.abs(turn) > 0.1 ? `, turning ${turn > 0 ? 'right' : 'left'} ${Math.abs(turn).toFixed(1)} rad/s` : ''}`);
   }
   flySenses.textContent = bits.join('   ·   ');
+  renderMemory(b.memory);
   setBodyOpts(ph);
   for (const p of pathRows) {
     if (p.row.kind === 'dn') {
@@ -610,12 +613,31 @@ function onBody(b) {
   }
 }
 // keep the fly camera's orbit controls from capturing clicks meant for the overlays
-for (const el of viewFly.querySelectorAll('.experiments, .decision, .fly-hud'))
+for (const el of viewFly.querySelectorAll('.decision, .fly-hud'))
   for (const t of ['pointerdown', 'wheel']) el.addEventListener(t, e => e.stopPropagation());
 document.querySelectorAll('[data-exp]').forEach(btn => btn.onclick = () => send({ cmd: 'body', action: btn.dataset.exp, side: btn.dataset.side, home: !!btn.dataset.home }));
 // body options: physics, leg feedback, built-in rhythms
 const bodyBtns = Object.fromEntries([...document.querySelectorAll('[data-body]')].map(b => [b.dataset.body, b]));
 let bodyOpts = {};
+// what the mushroom body has learned, per odour (Lab mode, Teach it)
+const memEl = document.getElementById('memory');
+let memKey = '';
+function renderMemory(m) {
+  if (!memEl || !m) return;
+  const rows = Object.entries(m.odours || {});
+  const key = JSON.stringify([rows, (m.pairings || []).length]);
+  if (key === memKey) return;
+  memKey = key;
+  if (!rows.length) {
+    memEl.innerHTML = '<div class="empty">Nothing learned yet. Put an odour near the fly (Fruit smell, CO₂, Geosmin), then Reward or Punish while it smells it.</div>';
+    return;
+  }
+  const bar = (v, cls) => `<div class="bar"><i class="${cls}" style="width:${Math.min(100, Math.max(0, v * 100)).toFixed(0)}%"></i></div>`;
+  memEl.innerHTML = '<div class="empty">How much weaker each odour\'s Kenyon cells now drive the output neurons gated by punishment (avoid) and reward (seek):</div>'
+    + rows.map(([od, x]) => `<div class="od" title="${esc(od)}: input to punishment-gated MBONs −${Math.round(x.aversive * 100)}%, to reward-gated −${Math.round(x.appetitive * 100)}%"><span>${esc(od)}</span>${bar(x.aversive, 'av')}<span class="v">avoid ${Math.round(x.aversive * 100)}%</span></div>`
+      + `<div class="od"><span></span>${bar(x.appetitive, 'ap')}<span class="v">seek ${Math.round(x.appetitive * 100)}%</span></div>`).join('')
+    + ((m.pairings || []).length ? `<div class="log">${m.pairings.slice(-4).map(p => `${p.t} s: ${esc(p.reinforcement)} with ${esc(p.odours.join(', ') || 'no odour')}`).join('<br>')}</div>` : '');
+}
 function setBodyOpts(ph) {
   bodyOpts = ph;
   bodyBtns.physics.classList.toggle('on', !!ph.on);
@@ -623,14 +645,14 @@ function setBodyOpts(ph) {
   if (!ph.available) bodyBtns.physics.title = 'Needs the mujoco package (installed with the app); running the kinematic body';
   bodyBtns.feedback.classList.toggle('on', !!ph.on && ph.feedback > 0);
   bodyBtns.feedback.disabled = !ph.on;
-  const mode = ph.rhythm || (ph.rhythms ? 'replay' : 'off');
-  bodyBtns.rhythm.textContent = `Rhythm: ${mode}`;
+  const mode = ph.rhythm || (ph.rhythms ? 'neurons' : 'off');
+  bodyBtns.rhythm.textContent = `Walking: ${mode === 'off' ? 'off' : 'on'}`;
   bodyBtns.rhythm.classList.toggle('on', mode !== 'off');
 }
 bodyBtns.physics.onclick = () => send({ cmd: 'body', action: 'physics', on: !bodyOpts.on });
 bodyBtns.feedback.onclick = () => send({ cmd: 'body', action: 'feedback', gain: bodyOpts.feedback > 0 ? 0 : 1 });
 bodyBtns.rhythm.onclick = () => {
-  const order = ['neurons', 'replay', 'off'];
+  const order = ['neurons', 'off'];
   const next = order[(order.indexOf(bodyOpts.rhythm || 'neurons') + 1) % order.length];
   send({ cmd: 'body', action: 'rhythm', mode: next });
 };
@@ -664,7 +686,7 @@ function renderSkills(list) {
   for (const s of list) {
     const d = document.createElement('div');
     d.className = 'skill-item';
-    d.innerHTML = `<div class="grow"><div class="t">${esc(s.name.replace(/_/g, ' '))}${s.builtin ? ' <span class="tag">built in</span>' : ''}</div><div class="m">${esc(s.description)} · score ${(s.score ?? 0).toFixed(2)} · via ${esc(s.levels.join(', '))}${s.uses ? ` · used ${s.uses}×` : ''}</div></div>
+    d.innerHTML = `<div class="grow"><div class="t">${esc(s.name.replace(/_/g, ' '))}${s.builtin ? ' <span class="tag">built in</span>' : ''}</div><div class="m">${esc(s.description)} ${s.command ? ' · via command neurons' : ` · score ${(s.score ?? 0).toFixed(2)} · via ${esc(s.levels.join(', '))}`}${s.uses ? ` · used ${s.uses}×` : ''}</div></div>
       <button class="btn" title="Do it">▶</button>${s.builtin ? '' : '<button class="link" title="Forget this skill">×</button>'}`;
     const [play, forget] = d.querySelectorAll('button');
     play.onclick = () => send({ cmd: 'skill', action: 'play', name: s.name });

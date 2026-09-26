@@ -53,6 +53,7 @@ ARENA = 40.0            # half-width of the square arena floor (mm)
 # joints and muscles (flygym's defaults where they exist)
 KP_REST = 30.0          # joint stiffness with both muscles relaxed (passive tissue + resting tone: enough to stand)
 KP_MAX = 80.0           # with agonist and antagonist fully co-contracted
+STEP_STIFF = 1.0        # co-contraction of a stepping leg's muscles (locomotion.py)
 FORCE_MAX = 65.0
 FORCE_JUMP = 65.0       # the middle legs' femur and tibia during the jump kick (the launch itself is JUMP_MAX)
 JOINT_DAMPING = 0.5     # joint tissue is viscous: this also stills the contact chatter of a standing leg
@@ -137,6 +138,7 @@ class PhysicsBody:
         self.cost = 0.0            # seconds of compute per simulated second (smoothed)
         self.unstable = 0          # times the simulation blew up and was reset
         self.righted = 0           # times it was set back on its feet
+        self._settling = False
         self.back_t = 0.0
         self.home = (0.0, 0.0, 0.0)
         self.reset()
@@ -215,8 +217,10 @@ class PhysicsBody:
         return -low + 0.03
 
     # ------------------------------------------------------------------ run
-    def reset(self, pos=None, heading=None):
-        """Stand the fly up in its resting pose, at pos (x, y) facing heading (rad), or where it was put last."""
+    def reset(self, pos=None, heading=None, settle=True):
+        """Stand the fly up in its resting pose, at pos (x, y) facing heading (rad), or where it was put last.
+        settle: let it settle onto its feet for 0.3 s first (not while recovering from a blow-up inside a
+        step, which would recurse)."""
         if pos is not None or heading is not None:
             x, y = pos if pos is not None else self.home[:2]
             self.home = (float(x), float(y), float(heading if heading is not None else self.home[2]))
@@ -238,9 +242,14 @@ class PhysicsBody:
         self.flight_force = np.zeros(3)
         self.back_t = 0.0
         # let it settle onto its feet before anything reads its senses (no jolt for the nerve cord)
-        rest = {k: self.neutral[k[0]][k[1]] for k in self.act_ids}
-        for _ in range(int(0.3 / 0.033)):
-            self.step(0.033, rest, {}, {})
+        if settle and not self._settling:
+            self._settling = True
+            try:
+                rest = {k: self.neutral[k[0]][k[1]] for k in self.act_ids}
+                for _ in range(int(0.3 / 0.033)):
+                    self.step(0.033, rest, {}, {})
+            finally:
+                self._settling = False
         self.cost = 0.0
 
     def _flight(self, flight):
@@ -278,11 +287,13 @@ class PhysicsBody:
         d.xfrc_applied[self.thorax, :3] = f
         d.xfrc_applied[self.thorax, 3:] = t + np.cross(arm, f)
 
-    def step(self, dt, target, stiffness, adhesion, flight=None):
+    def step(self, dt, target, stiffness, adhesion, flight=None, gait=None):
         """Advance dt seconds. target: {(leg, dof): angle}; stiffness: {(leg, dof): 0..1 co-contraction};
         adhesion: {leg: 0..1}; flight: {"power": 0..1, "steer": -1..1 (+ = left), "jump": 0..1}. Targets and stiffness
         move smoothly from the last frame's values to these over the frame (muscles don't jump), in
-        CHUNK-long pieces. Returns the sensed state."""
+        CHUNK-long pieces. gait: optional callable(dt) -> (weight, {(leg, dof): angle}, {leg: adhesion}) from
+        the walking oscillators (locomotion.py), blended in over the muscles' targets each chunk.
+        Returns the sensed state."""
         m, d = self.model, self.data
         keys = list(self.act_ids)
         ids = np.array([self.act_ids[k] for k in keys])
@@ -300,10 +311,20 @@ class PhysicsBody:
         load = {leg: 0.0 for leg in LEGS}
         touch = {leg: 0.0 for leg in LEGS}
         f6 = np.zeros(6)
+        adh_base = {leg: float(adhesion.get(leg, 0.0)) for leg in self.adh_ids}
         for c, k in enumerate(per):
             a = (c + 1) / chunks
-            d.ctrl[ids] = old_t + a * (new_t - old_t)
+            tgt = old_t + a * (new_t - old_t)
             kp = old_k + a * (new_k - old_k)
+            if gait is not None:
+                w, gt, gpad = gait(k * m.opt.timestep)
+                if w > 0:
+                    g = np.array([gt.get(key, t) for key, t in zip(keys, tgt)])
+                    tgt = (1 - w) * tgt + w * g
+                    kp = np.maximum(kp, KP_REST + (KP_MAX - KP_REST) * w * STEP_STIFF)
+                    for leg, i in self.adh_ids.items():
+                        d.ctrl[i] = (1 - w) * adh_base[leg] + w * gpad.get(leg, 0.0)
+            d.ctrl[ids] = tgt
             m.actuator_gainprm[ids, 0] = kp
             m.actuator_biasprm[ids, 1] = -kp
             self._flight(flight)
@@ -326,16 +347,19 @@ class PhysicsBody:
             # a numerical blow-up (MuJoCo would restart from the model's zero pose): stand the fly
             # back up where it was, in its resting pose
             x, y = float(d.qpos[self.root_q]), float(d.qpos[self.root_q + 1])
-            self.reset(pos=(x, y) if np.isfinite([x, y]).all() else None)
+            self.reset(pos=(x, y) if np.isfinite([x, y]).all() else None, settle=False)
             self.unstable += 1
+            return self.sensed()
         # a fly that lands on its back rights itself with its legs; this model can't make those movements,
         # so after a second on its back on the ground it is set back on its feet where it lies
         R = d.xmat[self.thorax].reshape(3, 3)
         on_back = R[2, 2] < -0.2 and d.qvel[self.root_v + 2] ** 2 < 25.0
         self.back_t = self.back_t + dt if on_back else 0.0
         if self.back_t > 1.0:
-            self.reset(pos=(float(d.qpos[self.root_q]), float(d.qpos[self.root_q + 1])), heading=_yaw_of(d.qpos[self.root_q + 3:self.root_q + 7]))
+            self.reset(pos=(float(d.qpos[self.root_q]), float(d.qpos[self.root_q + 1])),
+                       heading=_yaw_of(d.qpos[self.root_q + 3:self.root_q + 7]), settle=False)
             self.righted += 1
+            return self.sensed()
         el = time.perf_counter() - t0
         self.cost = 0.8 * self.cost + 0.2 * el / max(dt, 1e-6)
         self.load = {leg: v / chunks for leg, v in load.items()}

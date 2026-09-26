@@ -1,40 +1,24 @@
 """
-Rhythm generators grown from the nerve cord's own neurons.
+The legs' premotor rhythm neurons, found in the nerve cord's wiring, and the descending drive to them.
 
-A walking fly's legs are stepped by rhythm-generating circuits in the ventral nerve cord (central
-pattern generators). Which neurons form them in Drosophila isn't known yet. The classic design (Brown's
-half-centre, found across animals) is two groups of premotor neurons, one driving swing (lifting the
-leg and moving it forward), one driving stance (pressing it down and pushing back), that inhibit each
-other and tire during a burst, so they take turns.
+Which nerve-cord neurons generate the stepping rhythm in Drosophila isn't known. For each leg this
+picks, from the connectome, the excitatory interneurons whose synapses go mostly to that leg's swing
+motor neurons (trochanter flexors, promotors; e.g. IN21A010, IN19B012, INXXX464) and to its stance
+motor neurons (trochanter extensors, remotors; e.g. IN21A012, IN19A010, IN03A010), and the inhibitory
+interneurons linking the two groups (e.g. IN19A002, IN19A003). Neurons that also excite the jump
+muscle's motor neuron (directly or through one more neuron) are left out, so stepping can't set off
+the escape jump.
 
-The connectome has the pieces. For each leg:
+An earlier version made these groups generate the rhythm themselves (mutual inhibition plus a
+tiring current). They did alternate, but the six legs didn't coordinate and the steps were weak and
+forwards only. Now the rhythm and coordination come from the walking oscillators (locomotion.py) and
+these neurons follow them: while a leg is in swing its swing group gets synaptic drive, in stance its
+stance group, so the leg's premotor and motor neurons fire in time with its steps (visible in the
+brain and the activity view), through the connectome's own synapses.
 
-  swing group    excitatory nerve-cord interneurons whose synapses go mostly to that leg's swing motor
-                 neurons (trochanter flexors, promotors), e.g. IN21A010, IN19B012, INXXX464
-  stance group   the same for the stance motor neurons (trochanter extensors, remotors), e.g. IN21A012,
-                 IN01A015, IN19A010, IN03A010
-  inhibitory     interneurons driven by one group that inhibit the other (e.g. IN19A002, IN19A003),
-  links          in both directions
-
-These neurons, their synapses onto the motor neurons, and the rest of their wiring are the
-connectome's. Three things a leaky integrate-and-fire network with synapse-count weights can't do are
-added, for these neurons only, while the rhythm generators are on:
-
-- Tiring: a second, faster adaptation current (sim.py: tau_burst, d_burst) ends each burst. (They are
-  also exempt from the slow stabilising adaptation that "loop" neurons get.)
-- Reciprocal inhibition: the inhibition the wiring shows between the groups runs through interneurons
-  that the spiking model doesn't drive hard enough to carry it; it is modelled as direct inhibitory
-  synapses between the groups (COUPLE_MV each), switched on with the generators.
-- Descending drive: command neurons such as P9 reach these premotor neurons through several layers of
-  interneurons, and the signal fades out on the way in the spiking model. Each descending neuron's
-  summed influence on each leg's rhythm neurons through up to three synapses (signed, normalised by
-  each target's input, as in skills.py) is computed from the wiring and delivered as synaptic input, in
-  proportion to how fast that descending neuron is firing right now. Which legs a command drives, and
-  how hard, is the wiring's.
-
-Everything else, including how the six legs coordinate, is left to the connectome. Neurons that also
-excite the jump muscle's motor neuron (directly or through one more neuron, e.g. IN20A.22A001) are
-left out, so stepping can't set off the escape jump.
+Also computed here from the wiring: each descending neuron's summed influence on each leg's rhythm
+neurons through up to three synapses (signed, normalised by each target's input). Weighted by how
+fast the descending neurons fire, this is one of the brain's walking commands (wiring_drive()).
 """
 from pathlib import Path
 
@@ -49,11 +33,9 @@ SWING = {"lift": ["trochanter_flexor", "accessory_trochanter_flexor"], "carry": 
 STANCE = {"press": ["trochanter_extensor", "sternotrochanter_extensor"], "pull": ["pleural_remotor_and_abductor", "sternal_posterior_rotator"]}
 GROUP = 6            # neurons per group
 LINKS = 6            # inhibitory link interneurons per direction, per leg (identified, for the record)
-TAU_BURST = 200.0    # ms: how long the tiring lasts
-D_BURST = 0.5        # mV per spike: how fast a burst tires
-COUPLE_MV = 8.0      # mV: each rhythm neuron's inhibition of each neuron of the other group in its leg
-DRIVE_MAX = 3500.0   # events/s of descending drive at most, per rhythm neuron (1 mV each)
+DRIVE_MAX = 3500.0   # events/s: scale of the descending drive (wiring_drive saturates around here)
 DRIVE_UNIT = 200000.0  # events/s per unit of (Hz x influence), before saturation
+FOLLOW_HZ = 2500.0   # events/s (1 mV each) to a leg's swing or stance group while it is in that phase
 RATE_TAU = 0.05      # s, smoothing of the descending neurons' firing rates
 
 
@@ -63,9 +45,11 @@ class CPG:
         N = world.N
         sup = np.array(world.tables["super_class"])[world.sup]
         sign = np.load(Path(__file__).parent / "data" / "neurons.npz")["sign"]
-        rows = np.repeat(np.arange(N, dtype=np.int32), np.diff(world.indptr))
-        W = world.weights["stable"].astype(np.float32)
-        A = sparse.csr_matrix((W, (rows, world.indices)), shape=(N, N))
+        # the wiring the simulator runs (the connectome, or a control variant: app.World.set_variant)
+        indptr, indices, W = getattr(world, "wiring", (world.indptr, world.indices, world.weights["stable"]))
+        rows = np.repeat(np.arange(N, dtype=np.int32), np.diff(indptr))
+        W = W.astype(np.float32)
+        A = sparse.csr_matrix((W, (rows, indices)), shape=(N, N))
         pools = {p["key"]: p["neurons"] for p in world.presets["pools"]}
         vnc = sup == "ventral_nerve_cord_intrinsic"
         premotor = vnc & (sign > 0)
@@ -107,19 +91,10 @@ class CPG:
         self.rhythm = sorted(taken)
         names = world.tables["type"]
         self.types = {k: sorted({names[world.type[n]] for n in v}) for k, v in self.groups.items()}
-        # the model's reciprocal inhibition: every rhythm neuron onto every neuron of its leg's other group
-        pre, post = [], []
-        for leg in LEGS:
-            a, b = self.groups[(leg, "swing")], self.groups[(leg, "stance")]
-            for x in a:
-                for y in b:
-                    pre += [x, y]
-                    post += [y, x]
-        self.couple = (np.array(pre, np.int64), np.array(post, np.int64))
         # descending neurons' net influence on each leg's generator, through up to three synapses
         dn = np.where(sup == "descending")[0]
-        inp = np.bincount(world.indices, weights=np.abs(W), minlength=N).astype(np.float32)
-        An = sparse.csr_matrix((W / np.maximum(inp[world.indices], 1.0), (rows, world.indices)), shape=(N, N))
+        inp = np.bincount(indices, weights=np.abs(W), minlength=N).astype(np.float32)
+        An = sparse.csr_matrix((W / np.maximum(inp[indices], 1.0), (rows, indices)), shape=(N, N))
         M = np.zeros((N, len(LEGS)), np.float32)
         for c, leg in enumerate(LEGS):
             ns = self.groups[(leg, "swing")] + self.groups[(leg, "stance")]
@@ -137,9 +112,11 @@ class CPG:
         self.drive = np.zeros(len(LEGS))
         self.on = False
         self._ad = self._dep = None
+        self._sent = None
 
     def enable(self, on):
-        """Switch the rhythm generators on or off (off: the network is exactly the connectome model)."""
+        """On: the rhythm neurons follow the walking oscillators (exempt from the stabilising adaptation,
+        which would silence them after a burst). Off: the network is exactly the connectome model."""
         self.on = bool(on)
         b = self.w.brain
         R = self.rhythm
@@ -147,26 +124,21 @@ class CPG:
             self._ad = b.ad_scale[R].copy()
             self._dep = b.dep_mask[R].copy()
         b.burst_scale[:] = 0.0
-        b.p["tau_burst"], b.p["d_burst"] = TAU_BURST, D_BURST
-        t = np.arange(len(b.Em)) * b.p["dt"]
-        b.Eb = np.exp(-t / TAU_BURST)
-        b.Kb = (TAU_BURST / (TAU_BURST - b.p["t_mbr"])) * (b.Eb - b.Em)
         if self.on:
-            b.burst_scale[R] = 1.0
             b.ad_scale[R] = 0.0
             b.dep_mask[R] = False
-            pre, post = self.couple
-            b.set_extra_synapses(pre, post, np.full(len(pre), -COUPLE_MV, np.float32))
         else:
             b.ad_scale[R] = self._ad
             b.dep_mask[R] = self._dep
+        if getattr(b, "_base", None) is not None:
             b.set_extra_synapses([], [], [])
         self.dn_rate[:] = 0
         self.drive[:] = 0
+        self._sent = None
         b.set_syn_drive({}, "cpg")
 
     def update(self, spikes, dt):
-        """After each brain frame: the descending neurons' rates -> drive to each leg's generator."""
+        """After each brain frame: the descending neurons' rates -> their wiring influence on each leg."""
         if not self.on:
             return
         k = self.dn_of[spikes]
@@ -175,13 +147,27 @@ class CPG:
         a = 1.0 - np.exp(-dt / RATE_TAU)
         self.dn_rate += a * (inst - self.dn_rate)
         self.drive = self.dn_rate @ self.E
+
+    def wiring_drive(self):
+        """0..1: how strongly the descending neurons now drive the legs' rhythm neurons, by the wiring."""
+        if not self.on:
+            return 0.0
+        return float(np.mean(np.tanh(np.clip(self.drive, 0, None) * DRIVE_UNIT / DRIVE_MAX)))
+
+    def follow(self, walker):
+        """Drive each leg's swing or stance group, whichever phase its oscillator is in."""
+        if not self.on:
+            return
         drive = {}
-        for c, leg in enumerate(LEGS):
-            ev = DRIVE_MAX * float(np.tanh(max(0.0, self.drive[c]) * DRIVE_UNIT / DRIVE_MAX))
-            if ev > 20:
-                for n in self.groups[(leg, "swing")] + self.groups[(leg, "stance")]:
+        if walker.w > 0.05:
+            ev = FOLLOW_HZ * walker.w
+            for leg in LEGS:
+                for n in self.groups[(leg, "swing" if walker.in_swing(leg) else "stance")]:
                     drive[n] = (ev, 1.0)
-        self.w.brain.set_syn_drive(drive, "cpg")
+        key = tuple(sorted(drive))
+        if key != self._sent or drive:
+            self._sent = key
+            self.w.brain.set_syn_drive(drive, "cpg")
 
     def activity(self):
         """Mean firing rate of each leg's swing and stance group (Hz), for the viewer."""
