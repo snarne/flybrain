@@ -18,7 +18,8 @@ brain and the activity view), through the connectome's own synapses.
 
 Also computed here from the wiring: each descending neuron's summed influence on each leg's rhythm
 neurons through up to three synapses (signed, normalised by each target's input). Weighted by how
-fast the descending neurons fire, this is one of the brain's walking commands (wiring_drive()).
+fast the descending neurons fire, this is available as wiring_drive(), but it isn't used to command
+walking: it counts feeding and grooming descending neurons too, which also reach the legs' networks.
 """
 from pathlib import Path
 

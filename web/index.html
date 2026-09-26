@@ -34,6 +34,7 @@
 <div id="view-brain" class="view"></div>
 <div id="view-activity" class="view" hidden></div>
 <div id="view-fly" class="view">
+  <div id="place-hint" class="place-hint" hidden></div>
   <div class="fly-hud">
     <div id="fly-mode" class="mode-badge">Resting</div>
     <div id="fly-senses" class="fly-senses"></div>
@@ -74,21 +75,21 @@
 
   <div id="tab-lab" class="tab" hidden>
     <section class="lab-sec">
-      <h2>Put in the world <small>near the fly; it senses each thing from where it is (each antenna, eye and foot its own side)</small></h2>
+      <h2>Put in the world <small>food, smells and air patches: click one, then click the floor where you want it (click the button again to put it near the fly). The fly senses each thing from where it is.</small></h2>
       <div class="exp-group">
         <button data-exp="loom" data-side="left" title="A dark object swoops at the fly from its left">Threat ◀</button>
       <button data-exp="loom" data-side="right" title="A dark object swoops at the fly from its right">Threat ▶</button>
       <button data-exp="target" data-side="left" title="A small dark fly-sized object darting back and forth ahead-left (small-object detectors LC10a)">Target ◀</button>
       <button data-exp="target" data-side="right" title="The same ahead-right">Target ▶</button>
-      <button data-exp="sugar" title="A sugar drop just in front of its front feet">Sugar drop</button>
-      <button data-exp="bitter" title="A bitter drop just in front of its front feet">Bitter drop</button>
-      <button data-exp="fruit" title="Ripe fruit smell (Or42b, Or22a, Or59b receptors) from a source ahead">Fruit smell</button>
-      <button data-exp="co2" title="Carbon dioxide, a stress odour (Gr21a/Gr63a)">CO₂</button>
-      <button data-exp="geosmin" title="Geosmin, the smell of harmful mould (Or56a)">Geosmin</button>
-      <button data-exp="heat" title="A warm patch of air (hot cells in the arista)">Warm</button>
-      <button data-exp="cold" title="A cool patch of air (cold cells in the arista)">Cool</button>
-      <button data-exp="humid" title="Moist air (hygrosensory neurons)">Humid</button>
-      <button data-exp="dry" title="Dry air">Dry</button>
+      <button data-exp="sugar" data-place="1" title="A sugar drop: its feet taste it when they stand in it">Sugar drop</button>
+      <button data-exp="bitter" data-place="1" title="A bitter drop">Bitter drop</button>
+      <button data-exp="fruit" data-place="1" title="Ripe fruit smell (Or42b, Or22a, Or59b receptors), spreading from its source">Fruit smell</button>
+      <button data-exp="co2" data-place="1" title="Carbon dioxide, a stress odour (Gr21a/Gr63a)">CO₂</button>
+      <button data-exp="geosmin" data-place="1" title="Geosmin, the smell of harmful mould (Or56a)">Geosmin</button>
+      <button data-exp="heat" data-place="1" title="A warm patch of air (hot cells in the arista)">Warm</button>
+      <button data-exp="cold" data-place="1" title="A cool patch of air (cold cells in the arista)">Cool</button>
+      <button data-exp="humid" data-place="1" title="Moist air (hygrosensory neurons)">Humid</button>
+      <button data-exp="dry" data-place="1" title="Dry air">Dry</button>
       <button data-exp="stripes" data-side="left" title="A striped drum turning to the left around the arena (motion detectors T4/T5)">Stripes ⟲</button>
       <button data-exp="stripes" data-side="right" title="A striped drum turning to the right">Stripes ⟳</button>
       <button data-exp="clear" title="Take everything out of the world">Clear</button>

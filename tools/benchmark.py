@@ -78,6 +78,13 @@ def s_jump(window):
     return f
 
 
+def s_escape_flight(r):
+    air = float(np.mean(r["air"])) * r["secs"]
+    up = r["upright"]
+    flew = clip01(air / 1.0)
+    return flew * (0.5 + 0.5 * (up > 0.7)), f"airborne {air:.1f} s, {'on its feet' if up > 0.7 else 'on its back or side'} at the end"
+
+
 def s_groom(r):
     front = np.maximum(r["ctl"]("LF.lift"), r["ctl"]("RF.lift"))
     lifted = float(np.mean(front[r["after"](0.3)] > 0.2))
@@ -232,6 +239,8 @@ EXPERIMENTS = [
     ("gf_jump", "Activate the giant fibre (DNp01)", "Escape jump within a few ms (von Reyn et al. 2014)", [("act", "gf")], 1.0, s_jump((0.035, 0.25))),
     ("loom_left", "Looming shadow from the left", "Escape takeoff before contact (von Reyn et al. 2014)", [("loom", "left")], 1.4, s_jump((0.5, 1.0))),
     ("loom_right", "Looming shadow from the right", "Escape takeoff before contact", [("loom", "right")], 1.4, s_jump((0.5, 1.0))),
+    ("escape_flight", "Looming shadow from the left", "Takes off, flies away and lands on its feet (Card & Dickinson 2008)",
+     [("loom", "left")], 4.0, s_escape_flight),
     ("adn_groom", "Activate aDN (DNg62)", "Antennal grooming with the front legs (Hampel et al. 2015)", [("act", "adn")], 2.5, s_groom),
     ("dust_groom", "Dust on the antennae", "Antennal grooming (Seeds et al. 2014)", [("dust", None)], 2.0, s_groom),
     ("sugar_mouth", "Sugar touched to the proboscis", "Proboscis extension (Shiu et al. 2024)", [("act", "probe_sugar")], 2.0, s_feed),
@@ -351,12 +360,15 @@ class Rig:
             rec["xy"].append(tuple(f["xy"]))
             rec.setdefault("heading", []).append(f["heading"])
         rec["wall"] = time.time() - t0
+        rec["upright"] = float(b.sensed["upright"]) if b.sensed is not None else 1.0
         return rec
 
 
 def analyse(rec):
     t = np.array(rec["t"])
-    r = {k: np.array(v) for k, v in rec.items() if k in ("fwd", "turn", "ttm")}
+    r = {k: np.array(v) for k, v in rec.items() if k in ("fwd", "turn", "ttm", "air")}
+    r["secs"] = float(t[-1]) if len(t) else 0.0
+    r["upright"] = rec.get("upright", 1.0)
     r["xy"], r["source"], r["heading"] = rec["xy"], rec["source"], rec.get("heading", [0.0])
     r["t_on"] = 0.0
     r["after"] = lambda s: t >= s

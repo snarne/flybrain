@@ -65,10 +65,11 @@ export async function createFlyView(dom) {
   })();
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(2 * ARENA, 2 * ARENA), new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.95 }));
   scene.add(floor);
-  const wallMat = new THREE.MeshStandardMaterial({ color: 0x2b3240, roughness: 0.8, transparent: true, opacity: 0.55 });
+  // the arena's walls: glass, as tall as the fly can fly (server/physics.py keeps it inside them)
+  const wallMat = new THREE.MeshStandardMaterial({ color: 0x3a4458, roughness: 0.3, transparent: true, opacity: 0.18, depthWrite: false });
   for (const [x, y, w, h] of [[0, ARENA, 2 * ARENA, 0.4], [0, -ARENA, 2 * ARENA, 0.4], [ARENA, 0, 0.4, 2 * ARENA], [-ARENA, 0, 0.4, 2 * ARENA]]) {
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, 3), wallMat);
-    wall.position.set(x, y, 1.5);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(w, h, 16), wallMat);
+    wall.position.set(x, y, 8);
     scene.add(wall);
   }
   // a striped drum around the arena, shown while the stripes turn
@@ -279,9 +280,10 @@ export async function createFlyView(dom) {
   const sm = (key, target, k) => (cur[key] = (cur[key] ?? target) + (target - (cur[key] ?? target)) * k);
 
   // wing orientation, built from scratch in the thorax frame:
-  //   base: mesh span (local -Y) pointing out sideways, membrane horizontal
+  //   base: mesh span pointing out sideways (the left wing's mesh is the right one mirrored, so it
+  //   already points left), membrane horizontal;
   //   then pitch about the span (wing rotation), elevation, and stroke/fold about the vertical
-  const qBase = { L: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI), R: new THREE.Quaternion() };
+  const qBase = { L: new THREE.Quaternion(), R: new THREE.Quaternion() };
   const qa = new THREE.Quaternion(), qb = new THREE.Quaternion(), qc = new THREE.Quaternion();
   function wingQuat(side, stroke, elev, pitch, out) {
     const s = side === 'L' ? 1 : -1;
@@ -311,7 +313,8 @@ export async function createFlyView(dom) {
     }
     // wings: posture from the steering/posture muscles, beat from the power muscles
     const W = J?.wings || { L: {}, R: {} };
-    const power = sm('power', W.L?.power || 0, Math.min(1, dt * 6));
+    // flight power: the wing power motor neurons', or the flight kept up once airborne (server/body.py)
+    const power = sm('power', Math.max(W.L?.power || 0, st.airborne ? (st.flight_power || 0) : 0), Math.min(1, dt * 6));
     const beating = !!st.airborne && power > 0.12;   // feet on the ground inhibit flight (tarsal reflex)
     wingPhase += dt * 2 * Math.PI * (beating ? 7 + 5 * Math.min(1, power) : 0);   // shown ~25x slower than 200 Hz
     for (const side of ['L', 'R']) {
@@ -422,5 +425,26 @@ export async function createFlyView(dom) {
     controls.update();
   }
 
-  return { scene, camera, controls, update, onBody, nodes, setGlow: v => { glowOn = v; } };
+  // placing things by clicking the floor: where a point on the view lands on the arena floor
+  const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), hit = new THREE.Vector3();
+  const floorPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+  function pickFloor(clientX, clientY) {
+    const r = dom.getBoundingClientRect();
+    ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, camera);
+    if (!ray.ray.intersectPlane(floorPlane, hit)) return null;
+    if (Math.abs(hit.x) > ARENA || Math.abs(hit.y) > ARENA) return null;
+    return { x: hit.x, y: hit.y };
+  }
+  const marker = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.2, 40),
+    new THREE.MeshBasicMaterial({ color: 0xffc857, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }));
+  marker.position.z = 0.03;
+  marker.visible = false;
+  scene.add(marker);
+  function showMarker(p) {
+    marker.visible = !!p;
+    if (p) marker.position.set(p.x, p.y, 0.03);
+  }
+
+  return { scene, camera, controls, update, onBody, nodes, setGlow: v => { glowOn = v; }, pickFloor, showMarker };
 }

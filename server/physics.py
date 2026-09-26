@@ -71,16 +71,20 @@ CHUNK = 0.004           # targets are updated this often within a frame (s)
 # the fly (real flies bring them under the body before takeoff); the thrust is applied to the body while
 # the jump muscle is active: ~3x body weight for ~50 ms, a takeoff speed of about 0.5-1 m/s
 JUMP_MAX = 10.0         # x body weight, only while the middle legs touch the ground (a few ms): a 4-6 mm hop
-JUMP_TILT = 0.5         # forward component (up is 1)
+JUMP_TILT = 0.25        # forward component (up is 1): a steep takeoff, as real escape jumps are
 
 # flight (in units of the fly's weight and body lengths)
 LIFT_MAX = 1.25         # lift at full flight power, x body weight (a hover needs ~0.8 power)
 CEILING = 15.0          # mm: lift fades above this height (the arena's lid)
-THRUST_MAX = 0.8        # forward thrust at full power, x body weight
+THRUST_MAX = 0.25       # forward thrust at full power, x body weight (about 5 cm/s in this small arena)
 YAW_GAIN = 2.5e-3       # steering torque per unit of left-right stroke difference (x weight x mm)
 DRAG = 4.0              # air drag, x weight per (m/s)... per 1000 mm/s
-LEVEL_GAIN = 0.2        # haltere-mediated levelling torque (x weight x mm per rad)
-ANG_DAMP = 1e-2         # rotation damping in flight (halteres sense it, steering muscles oppose it)
+LEVEL_GAIN = 0.6        # haltere-mediated levelling torque (x weight x mm per rad)
+ANG_DAMP = 3e-2         # rotation damping in flight (halteres sense it, steering muscles oppose it)
+WALL_K = 40.0           # arena walls: push back in, x weight per mm past them
+WALL_C = 40.0           # and damping, x weight per (m/s) outwards
+WALL_LOOK = 10.0        # mm: how far ahead a flying fly sees a wall coming
+AVOID = 4.0             # how hard it turns away (steering units)
 
 
 def available():
@@ -270,16 +274,32 @@ class PhysicsBody:
         if jump > 0.1:
             dirn = up + JUMP_TILT * fwd
             f += JUMP_MAX * jump * W * dirn / np.linalg.norm(dirn)
-        if power > 0.05:
-            ceil = min(1.0, max(0.0, (CEILING - float(d.subtree_com[self.thorax][2])) / 3.0))
-            f += LIFT_MAX * power * ceil * W * up + THRUST_MAX * power * W * fwd
-            t += YAW_GAIN * W * float(flight.get("steer", 0.0)) * power * np.array([0, 0, 1.0])
-            # halteres: keep the body level (torque towards up = world z) and damp rotation
-            t += LEVEL_GAIN * W * np.cross(up, np.array([0, 0, 1.0]))
-            t -= ANG_DAMP * (R @ w) * power          # (the free joint's angular velocity is in the body frame)
         airborne = sum(self.touch.values()) == 0
+        com = d.subtree_com[self.thorax]
+        if power > 0.05:
+            ceil = min(1.0, max(0.0, (CEILING - float(com[2])) / 3.0))
+            f += LIFT_MAX * power * ceil * W * up + THRUST_MAX * power * W * fwd
+            steer = float(flight.get("steer", 0.0))
+            # flying flies turn away from a wall that looms ahead (visual collision avoidance)
+            ahead = com[:2] + WALL_LOOK * fwd[:2] / max(float(np.linalg.norm(fwd[:2])), 1e-6)
+            if np.abs(ahead).max() > ARENA - 2.0:
+                centre = -com[:2]
+                side = fwd[0] * centre[1] - fwd[1] * centre[0]          # + = the centre is to the left
+                steer += AVOID if side >= 0 else -AVOID
+            t += YAW_GAIN * W * steer * power * np.array([0, 0, 1.0])
+        if power > 0.05 or airborne or jump > 0.1:
+            # halteres: keep the body level (torque towards up = world z) and damp rotation; they beat with
+            # the wings, which start at takeoff
+            t += LEVEL_GAIN * W * np.cross(up, np.array([0, 0, 1.0]))
+            t -= ANG_DAMP * (R @ w)                  # (the free joint's angular velocity is in the body frame)
         if airborne:
             f -= DRAG * W * v / 1000.0
+        # the arena's walls: a stiff, damped push back in (the legs may touch the wall line)
+        for i in range(2):
+            over = abs(float(com[i])) - (ARENA - 0.8)
+            if over > 0:
+                sgn = 1.0 if com[i] > 0 else -1.0
+                f[i] -= sgn * (WALL_K * over * W + WALL_C * W * max(0.0, sgn * float(v[i])) / 1000.0)
         self.flight_force = f
         # apply at the whole fly's centre of mass (the root body's own centre is off to one side, and a
         # push there would spin the fly)

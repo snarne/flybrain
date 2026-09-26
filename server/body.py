@@ -46,6 +46,10 @@ ACTIVATE = {
     "adn": ("DNg62", "aDN1 / DNg62: antennal grooming (Hampel et al. 2015)"),
 }
 RHYTHMS = ("neurons", "off")
+FLIGHT_CRUISE = 0.85     # flight power kept up once airborne (a hover needs ~0.8)
+FLIGHT_SINK = 0.55       # ... easing off to this, so the fly sinks and lands
+FLIGHT_HOLD = 1.5        # s of cruising before easing off
+FLIGHT_EASE = 1.0        # s to ease off
 # reinforcement, as fly labs give it: activating the mushroom body's dopamine neurons directly
 ODOURS = ("fruit", "co2", "geosmin", "cva")
 REINFORCE = {"reward": ("pam", "PAM dopamine neurons: reward (Liu et al. 2012; Burke et al. 2012)"),
@@ -135,7 +139,8 @@ class Body:
         self._pending, self._pending_t = None, 0.0
         self._swing = {}
         self.joints, self.parts = {}, {}
-        self.airborne, self.air_t = False, 0.0
+        self.airborne, self.air_t, self.flight_t, self.flight_power = False, 0.0, 0.0, 0.0
+        self._jump_t = 9.0
         self._reflex = None
         self.dust_t = 0.0
         self.probe = None         # a drop touched to the proboscis by the experimenter: {"kind", "t"}
@@ -278,7 +283,10 @@ class Body:
         if self.rhythm == "neurons" and not moving_skill:
             cpg = getattr(self.w, "cpg", None)
             r_all = self.w.all_readouts() if hasattr(self.w, "all_readouts") else r
-            W.command(r_all, cpg.wiring_drive() if cpg is not None else 0.0, dt, yaw_rate=-self.ball[1])
+            # only the walking and steering command neurons command walking: the summed wiring influence of
+            # all descending neurons on the legs' networks (cpg.wiring_drive) also counted feeding and
+            # grooming neurons, and set the fly walking while it tasted sugar or had dust on its antennae
+            W.command(r_all, 0.0, dt, yaw_rate=-self.ball[1])
         else:
             W.command({}, 0.0, dt)
         if cpg_follow := getattr(self.w, "cpg", None):
@@ -303,25 +311,38 @@ class Body:
             ("walk", self._walk_key(r), walking or W.w > 0.3, W.why or "legs stepping"),
             ("legs", None, max(leg_act.values()) > 0.25, "leg motor neurons firing"),
         ]
-        # flight: the tarsal reflex. With feet on the ground the flight motor is held off; it runs once
-        # no foot has touched the ground for 0.1 s (after a jump, or when lifted), for as long as the
-        # flight power muscles keep going
+        # flight: the tarsal reflex. With feet on the ground the flight motor is held off; it starts once no
+        # foot has touched the ground for 0.1 s while the flight power muscles fire (after a jump, or when
+        # lifted), and losing contact keeps it going (in real flies, a fly without ground under its feet
+        # keeps flying): at a cruising power for FLIGHT_HOLD seconds, then easing off so the fly sinks and
+        # lands; landing on three or more feet ends it
         if self.sensed is not None:
             touching = sum(self.sensed["touch"].values())
             self._untouched = self._untouched + dt if touching == 0 else 0.0
-            if self._untouched > 0.1 and power > 0.3:
-                self.airborne, self.air_t = True, 0.0
-            elif self.airborne and (touching >= 3 or power < 0.2):
-                self.air_t += dt
+            # an escape jump starts flight straight away: the giant fibre drives the flight power muscles
+            # (via PSI) as well as the jump muscle
+            self._jump_t = 0.0 if jump > 0.3 else self._jump_t + dt
+            took_off = self._jump_t < 0.5 and self._untouched > 0.03
+            if not self.airborne and (took_off or (self._untouched > 0.1 and power > 0.2)):
+                self.airborne, self.air_t, self.flight_t = True, 0.0, 0.0
+            elif self.airborne:
+                self.flight_t += dt
+                self.air_t = self.air_t + dt if (touching >= 3 and self.flight_t > 0.3) else 0.0
                 if self.air_t > 0.3:
                     self.airborne = False
         else:
             if jump > 0.3 and r.get("escape", 0) > 20:
-                self.airborne, self.air_t = True, 0.0
+                self.airborne, self.air_t, self.flight_t = True, 0.0, 0.0
             elif self.airborne:
-                self.air_t = self.air_t + dt if power < 0.2 else 0.0
-                if self.air_t > 0.4:
+                self.flight_t += dt
+                if self.flight_t > FLIGHT_HOLD + FLIGHT_EASE:
                     self.airborne = False
+        if self.airborne:
+            ease = min(1.0, max(0.0, (self.flight_t - FLIGHT_HOLD) / FLIGHT_EASE))
+            self.flight_power = max(power, FLIGHT_CRUISE + (FLIGHT_SINK - FLIGHT_CRUISE) * ease)
+        else:
+            self.flight_power = 0.0
+        power = max(power, self.flight_power)
         cands[1] = ("fly", cands[1][1], self.airborne and power > 0.3, cands[1][3])
         want = next(((lab, key, why) for lab, key, cond, why in cands if cond), ("rest", None, ""))
         if skill:
@@ -383,6 +404,8 @@ class Body:
             p["heading"] -= self.ball[1] * dt
             p["x"] += self.ball[0] * dt * math.cos(p["heading"])
             p["y"] += self.ball[0] * dt * math.sin(p["heading"])
+            lim = physics_mod.ARENA - 2
+            p["x"], p["y"] = max(-lim, min(lim, p["x"])), max(-lim, min(lim, p["y"]))
             return
         fwd_l = fwd_r = 0.0
         for leg in LEGS:
@@ -439,6 +462,7 @@ class Body:
     def state(self, skill=None):
         return {
             "type": "body", "mode": self.mode, "skill": skill, "airborne": self.airborne,
+            "flight_power": round(self.flight_power, 2),
             "joints": self.joints, "parts": self.parts, "ball": [round(b, 3) for b in self.ball],
             "rates": {k: round(v, 1) for k, v in self.rates.items() if v >= 0.5},
             "senses": self.senses,

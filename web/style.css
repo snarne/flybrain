@@ -371,3 +371,10 @@ body.mode-agent [data-for="lab"], body.mode-lab [data-for="agent"] { display: no
 .memory .od .bar i.ap { background: #6fd39a; }
 .memory .od .v { color: var(--muted); font-size: 11px; text-align: right; }
 .memory .log { color: var(--faint); font-size: 11px; line-height: 1.4; }
+
+/* placing things on the floor */
+.exp-group button.placing { border-color: var(--accent); color: var(--accent); background: #2a2413; }
+#view-fly.placing { cursor: crosshair; }
+.place-hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 5; background: #1a1f2acc;
+  border: 1px solid #ffc85766; color: var(--accent); padding: 5px 12px; border-radius: 99px; font-size: 12px; pointer-events: none; white-space: nowrap; }
+.place-hint[hidden] { display: none; }

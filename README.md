@@ -109,7 +109,9 @@ too: open **Use another model** in the same place (details under "Any model" bel
 - **Agent / Lab** (top): *Agent* is for talking to Fly (chat on the left; skills and the body link on
   the right). *Lab* is for experiments: put things in the fly's world, do things to it, teach it,
   activate or silence neurons, and switch body settings (left), with the motor, region and firing
-  panels (right).
+  panels (right). Food, smells and air patches go where you click: press *Fruit smell*, *Sugar drop*,
+  *Warm* and so on, then click the floor (press the button again to put it next to the fly; Esc
+  cancels).
 - **Senses** (left tab) drive real sensory neurons with Poisson spike trains: taste, Johnston's
   organ, olfactory, thermo- and hygrosensory neurons, leg touch, vision.
 - **Click any neuron** to see what it is, what it connects to, and to stimulate or silence it, with
@@ -171,12 +173,16 @@ Every frame (30 a second, in simulated time):
 **Jumping and flying.** The wings aren't simulated as airfoils, and the jump isn't simulated leg by
 leg (in this model's resting stance the middle legs splay sideways, while real flies bring them
 under the body first). While the jump muscle (tergotrochanter, driven by the giant fibre) is active
-and the middle legs are still on the ground, it pushes the body up and forward; once airborne, the
-indirect flight muscles (DLM, DVM) give lift and thrust in proportion to their activation, the
-steering muscles turn it (a bigger right stroke turns left), the halteres keep it level (a
-stabilising torque; halteres aren't in the neural model), and air drag slows it. A fly left on its
+and the middle legs are still on the ground, it pushes the body steeply up and a little forward. The
+wings give lift and thrust in proportion to the flight power, the steering muscles turn the fly (a
+bigger right stroke turns left), the halteres keep it level and damp its rotation from the moment it
+leaves the ground (a stabilising torque; halteres aren't in the neural model), and air drag slows it.
+A flying fly turns away from a wall that looms ahead (visual collision avoidance). A fly left on its
 back for a second is set back on its feet (a real fly rights itself with its legs; this model can't
 make those movements).
+
+The arena is a glass-walled box: the walls push the fly back in, whether it walks or flies into them,
+and whatever you put in the world stays inside it.
 
 **How far joints move:** every leg joint rests in the middle of the range a real fly uses when
 walking (recorded kinematics). Everyday muscle activation moves it within that range; only
@@ -200,13 +206,13 @@ What the wiring produces, checked live and with `tools/validate.py`:
 |---|---|---|
 | Sugar touched to the proboscis | proboscis extends and stays out | sugar taste neurons → ... → MN9 |
 | Sugar + bitter | feeding suppressed | bitter neurons inhibit the feeding pathway |
-| Threat from either side | escape jump, flight, landing a few mm away | LPLC2 → giant fibre → jump motor neuron (TTMn); LPLC2 → DNp06 → wing power motor neurons |
+| Threat from either side | escape jump, a couple of seconds' flight, landing on its feet | LPLC2 → giant fibre → jump motor neuron (TTMn); LPLC2 → DNp06 → wing power motor neurons |
 | Activate P9 / MDN / DNa02 / aDN | walks forwards / backs up / turns that way / grooms its antennae | the command neurons you drove |
-| Warm air | walks out of a warm zone | hot sensors → VP2 projection neurons → descending neurons whose wiring reaches the legs' networks |
+| Warm air | the brain responds; the walking command neurons don't | |
 | Sugar under the feet | the feet taste it, but the proboscis doesn't extend: in this model the tarsal taste signal doesn't reach MN9 (in real flies it does) | |
 | Small target darting ahead-left or right | turns towards it | LC10a → AOTU025 → DNa02 on that side, the pathway that steers male flies following a female (Ribeiro et al. 2018; Hindmarsh Sten et al. 2021) |
 | Fruit odour + Punish (or Reward) | that odour's Kenyon cell → output neuron synapses weaken; other odours' much less (see Learning) | ORNs → projection neurons → Kenyon cells; PPL1 (or PAM) dopamine at the output synapses |
-| Odours, humidity | the brain responds (antennal lobe, lateral horn, mushroom body); fruit ahead and CO₂ set the fly walking, but it doesn't steer by them | |
+| Odours, humidity | the brain responds (antennal lobe, lateral horn, mushroom body); the walking command neurons hardly do, so the fly doesn't move towards or away | |
 | Antenna dust | leg twitches only; the touch → grooming pathway is too weak in this wiring to reach the aDN command neurons | |
 
 Three things to know:
@@ -214,9 +220,13 @@ Three things to know:
 - **Gap junctions.** The giant fibre drives the jump motor neuron mainly through electrical synapses,
   which an electron-microscopy connectome cannot see. Those few known ones (giant fibre → TTMn and
   PSI) are added by hand, and marked as such.
-- **Feet on the ground stop flight.** In real flies, tarsal contact inhibits flight. The body follows
-  that rule: the flight motor only runs once no foot has touched the ground for 0.1 s (after a jump,
-  or when lifted), for as long as the flight power motor neurons keep firing.
+- **Flight follows the tarsal reflex.** In real flies, contact under the feet inhibits flight and
+  losing it starts and keeps up flight. So the flight motor runs once no foot has touched the ground
+  for 0.1 s while the flight power motor neurons fire, or straight after an escape jump (the giant
+  fibre drives the flight muscles as well as the jump muscle). Once airborne the fly keeps flying at a
+  cruising power for 1.5 s, then eases off, sinks and lands; touching down on three or more feet ends
+  the flight. (The brain's flight power neurons fire only for a fraction of a second after a looming
+  shadow, so without this the fly fell back after half a second of flight, often on its back.)
 - **Walking** (`server/locomotion.py`). The nerve-cord circuits that generate stepping in a fly
   (central pattern generators) aren't mapped yet, and a leaky integrate-and-fire model doesn't make
   rhythms by itself (with *Walking: off* the command neurons only give twitches). What is known is how
@@ -225,8 +235,10 @@ Three things to know:
   - six leg oscillators in a tripod (front and hind legs of one side with the middle leg of the
     other), each leg following a real fly's recorded step, all seven joints (NeuroMechFly's kinematic
     recording, 7 steps a second at full speed here up to 6);
-  - every frame the brain sets the gait from its descending neurons: how fast (P9/DNg97 and MDN, plus
-    every descending neuron's wiring influence on the legs' premotor neurons), which way (MDN against
+  - every frame the brain sets the gait from its walking command neurons: how fast (P9/DNg97, MDN,
+    DNa01/DNa02; not other descending neurons: an earlier version added every descending neuron's
+    wiring influence on the legs' networks, which counted feeding and grooming neurons too and set the
+    fly walking while it tasted sugar), which way (MDN against
     P9/DNg97; backwards is the step cycle run in reverse), and turning (DNa01/DNa02 left against
     right; the legs on the inside of the turn take shorter strides, as Rayshubskiy et al. 2020 and
     Yang et al. 2023 found); the walking fly also holds its course against turns it didn't command;
@@ -283,9 +295,23 @@ generic adaptation, which projection neurons, KCs and APL are exempt from. Now f
 punishment-gated MBONs by ~80% and CO₂'s by ~20%.
 
 What doesn't follow yet: the fly's behaviour. After training, it approaches fruit about as much as
-before (the learned_avoidance experiment below). The MBONs' output reaches the command neurons weakly
-in this model, and MBONs are silent unless KCs drive them (real ones fire spontaneously, but
-spontaneous MBON firing here spreads to the legs and makes the fly fidget with nothing happening).
+before (the learned_avoidance experiment below). Measured on the model, three things stop it:
+
+1. **The output neurons barely fire.** Fruit at the antennae makes the 110 MBONs fire 9 spikes in a
+   second in total (real ones fire spontaneously, several to tens of spikes a second each); the learned weakening takes that to
+   4. With a background input that makes them fire spontaneously, as real MBONs do, the odour's
+   effect on them drowns in it (593 spikes before training, 590 after).
+2. **Their output hardly reaches the command neurons.** Summed through up to three synapses, the
+   punishment-gated MBONs' influence on the walking and steering command neurons is under 1% of
+   those neurons' input, and in the spiking model the signal fades at each layer. Training changed
+   the command neurons' firing by nothing measurable.
+3. **The fly doesn't steer by smell.** Approach and avoidance are turns towards or away from an
+   odour; in this wiring and model, fruit and CO₂ set the fly walking but not turning (Scoring, below),
+   so there's no odour steering for a memory to change.
+
+Real flies close this loop through circuits downstream of the MBONs (the fan-shaped body, the
+lateral horn, and descending neurons for upwind steering) that the connectome contains but the
+spiking model doesn't carry at these strengths.
 
 ## Scoring against real experiments
 
@@ -314,38 +340,41 @@ strength (and the leg networks and mushroom body re-read from that wiring):
 | Experiment | Real flies | Walking on | Walking off | Shuffled |
 |---|---|---|---|---|
 | **Activating command neurons** | | | | |
-| P9 (DNp09) | walk forwards (Bidaye et al. 2020) | 0.84 (+4.2 mm/s) | 0.00 | 1.00 |
-| MDN | walk backwards (Bidaye et al. 2014) | 1.00 (−6.9 mm/s) | 0.00 | 1.00 |
-| DNa02, left / right | turn that way (Rayshubskiy et al. 2020) | 1.00 / 1.00 (0.84 rad/s) | 0.02 / 0.00 | 1.00 / 1.00 |
+| P9 (DNp09) | walk forwards (Bidaye et al. 2020) | 0.80 (+3.9 mm/s) | 0.00 | 1.00 |
+| MDN | walk backwards (Bidaye et al. 2014) | 1.00 (−6.5 mm/s) | 0.00 | 1.00 |
+| DNa02, left / right | turn that way (Rayshubskiy et al. 2020) | 1.00 / 0.96 (0.6-0.8 rad/s) | 0.00 / 0.00 | 1.00 / 1.00 |
 | The giant fibre | escape jump within ms (von Reyn et al. 2014) | 1.00 | 1.00 | 0.00 |
-| aDN (DNg62) | antennal grooming (Hampel et al. 2015) | 1.00 | 0.97 | 1.00 |
+| aDN (DNg62) | antennal grooming (Hampel et al. 2015) | 1.00 | 1.00 | 1.00 |
 | **Senses → behaviour** | | | | |
-| Looming shadow, left / right | escape takeoff before contact | 1.00 / 1.00 | 1.00 / 1.00 | 0.00 / 0.00 |
-| Small target darting ahead-left / right | turns towards it (Ribeiro et al. 2018) | 1.00 / 0.51 (+76° / +13°) | 0.11 / 0.01 | 0.05 / 0.00 |
+| Looming shadow, left / right | escape takeoff before contact | 1.00 / 1.00 | 0.67 / 1.00 | 0.00 / 0.00 |
+| Looming shadow | takes off, flies away, lands on its feet (Card & Dickinson 2008) | 1.00 (2.5 s airborne) | 1.00 | 0.00 |
+| Small target darting ahead-left / right | turns towards it (Ribeiro et al. 2018) | 1.00 / 1.00 (+91° / +59°) | 0.13 / 0.00 | 0.07 / 0.01 |
 | Sugar on the proboscis | extension (Shiu et al. 2024) | 1.00 | 1.00 | 0.00 |
 | Sugar under the front feet | extension (Dethier 1976) | 0.00 | 0.00 | 0.00 |
-| Dust on the antennae | antennal grooming (Seeds et al. 2014) | 0.08 | 0.00 | 0.00 |
-| Warm zone around it | walks out of it (Simões et al. 2021) | 1.00 | 0.00 | 0.00 |
-| CO₂ source ahead | moves away (Suh et al. 2004) | 0.00 (walks through it) | 0.00 | 0.00 |
-| Fruit odour 6 mm to the left / right | turns and walks towards it | 0.04 / 0.01 | 0.02 / 0.00 | 0.04 / 0.02 |
-| Stripes turning left | turns with them (optomotor) | 0.00 (turns against them) | 0.08 | 0.03 |
-| Fruit paired 3× with PPL1, CO₂ unpaired | paired odour's KC → MBON synapses weaken (Hige et al. 2015) | 1.00 (−81% vs −17%) | 1.00 | 0.00 |
-| The same with PAM (reward) | the same in reward compartments (Cohn et al. 2015) | 1.00 (−79% vs −12%) | 1.00 | 0.00 |
-| Fruit approach before / after punishment pairings | approaches less (Tully & Quinn 1985) | 0.01 | 0.00 | 0.04 |
-| **Controls** (8): no input; bitter on the proboscis or under the feet; fruit, geosmin, CO₂, heat, cold | stand still, don't feed, don't take off | 0.99 | 0.99 | 1.00 |
-| **Behaviours, activating command neurons** (6) | | **0.97** | 0.33 | 0.83 |
-| **Behaviours, from the senses** (15) | | **0.51** | 0.35 | **0.01** |
+| Dust on the antennae | antennal grooming (Seeds et al. 2014) | 0.00 | 0.00 | 0.00 |
+| Warm zone around it | walks out of it (Simões et al. 2021) | 0.00 | 0.00 | 0.00 |
+| CO₂ source ahead | moves away (Suh et al. 2004) | 0.00 | 0.00 | 0.00 |
+| Fruit odour 6 mm to the left / right | turns and walks towards it | 0.02 / 0.01 | 0.03 / 0.00 | 0.00 / 0.02 |
+| Stripes turning left | turns with them (optomotor) | 0.00 | 0.11 | 0.01 |
+| Fruit paired 3× with PPL1, CO₂ unpaired | paired odour's KC → MBON synapses weaken (Hige et al. 2015) | 1.00 (−82% vs −17%) | 1.00 | 0.00 |
+| The same with PAM (reward) | the same in reward compartments (Cohn et al. 2015) | 1.00 (−80% vs −11%) | 1.00 | 0.00 |
+| Fruit approach before / after punishment pairings | approaches less (Tully & Quinn 1985) | 0.00 | 0.00 | 0.01 |
+| **Controls** (8): no input; bitter on the proboscis or under the feet; fruit, geosmin, CO₂, heat, cold | stand still, don't feed, don't take off | 0.99 | 1.00 | 1.00 |
+| **Behaviours, activating command neurons** (6) | | **0.96** | 0.33 | 0.83 |
+| **Behaviours, from the senses** (16) | | **0.50** | 0.37 | **0.01** |
 
 What this says:
 
-- **Walking works.** The command neurons make the fly walk forwards, back up and turn either way, at
-  4-7 mm/s and about 0.8 rad/s, and it turns towards a moving target through LC10a → AOTU025 →
-  DNa02, the pathway that steers male flies after a female.
+- **Walking and escape work.** The command neurons make the fly walk forwards, back up and turn
+  either way, at 4-7 mm/s and 0.6-0.8 rad/s; it turns towards a moving target through LC10a →
+  AOTU025 → DNa02, the pathway that steers male flies after a female; and a looming shadow makes it
+  jump, fly for a couple of seconds and land on its feet.
 - **The real wiring carries everything the fly senses.** With the same neurons, sensors, body and
   model machinery, the shuffled wiring scores 0.01 on the 15 behaviours that start at a sense organ,
   against 0.51 for the connectome. Activating a command neuron directly still makes the shuffled fly
   walk, turn and groom, because the stepping and grooming models read those neurons themselves; the
-  giant fibre's jump, which goes through the nerve cord's wiring, fails.
+  giant fibre's jump, which goes through the nerve cord's wiring, fails. (Tasting sugar or bitter, or
+  dust on the antennae, no longer sets the fly walking: see Walking.)
 - **Ablations find the circuits where biology puts them**: silencing the 2 giant fibres abolishes the
   jump to a looming shadow (real flies still escape without them, with slower "long-mode" takeoffs,
   and here the fly runs instead); silencing the visual projection neurons abolishes escape and
@@ -353,8 +382,10 @@ What this says:
   abolishes learning and nothing else tested (escape 5 of 5, feeding). Removing all inhibition makes
   the network seize (sugar on the proboscis sets 28,000 neurons firing within 0.1 s instead of 185)
   and the fly thrashes across the arena with no input at all.
-- **What the wiring doesn't do in this model**, and so the fly doesn't either: odours set it walking
-  (fruit ahead, CO₂) but it doesn't steer by them, towards fruit or away from CO₂; turning stripes
+- **What the wiring doesn't do in this model**, and so the fly doesn't either: it doesn't steer by
+  odours, towards fruit or away from CO₂, and warmth doesn't reach its walking command neurons (an
+  earlier version walked out of warm air and through CO₂ only because any descending activity counted
+  as a walking command); turning stripes
   make it turn the wrong way, because in the simulation the right-side motion-sensing neurons (HS
   cells) respond to both directions and the right DNa02 fires either way; sugar under the feet
   reaches the proboscis motor neuron only through links carrying 0.5-1.4% of each next neuron's input;

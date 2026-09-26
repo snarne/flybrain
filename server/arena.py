@@ -33,6 +33,7 @@ PLUME = 6.0                      # odour plume width (mm)
 DROP_R = 0.6                     # food drop radius (mm)
 THREAT_R, THREAT_V, THREAT_D = 3.0, 40.0, 30.0   # radius, speed (mm/s), starting distance (mm)
 QUANT = 5.0
+ARENA = 40.0                     # half-width of the arena floor (mm), as physics.py
 TARGET_D, TARGET_R, TARGET_A, TARGET_F, TARGET_LIFE = 5.0, 0.5, 1.2, 1.0, 8.0   # distance, radius, sway (mm), Hz, s
 
 # where the parts are on a standing fly, in its own frame (mm; x forward, y left): used by the
@@ -107,6 +108,14 @@ class Arena:
             return None
         else:
             raise ValueError(f"unknown thing: {kind}")
+        # everything stays inside the arena (a threat swoops in from outside it, and that's fine)
+        if o["kind"] in ("sugar", "bitter", "odour", "heat", "cold", "humid", "dry"):
+            lim = ARENA - (1.0 if o["kind"] in ("sugar", "bitter") else 2.0)
+            o["x"], o["y"] = max(-lim, min(lim, float(o["x"]))), max(-lim, min(lim, float(o["y"])))
+        elif o["kind"] == "target":
+            lim = ARENA - 1.0
+            o["cx"], o["cy"] = max(-lim, min(lim, o["cx"])), max(-lim, min(lim, o["cy"]))
+            o["x"], o["y"] = o["cx"], o["cy"]
         # one of each odour/zone kind at a time keeps the world readable
         if o["kind"] in ("odour", "heat", "cold", "humid", "dry"):
             self.objects = [p for p in self.objects if not (p["kind"] == o["kind"] and p.get("odour") == o.get("odour"))]

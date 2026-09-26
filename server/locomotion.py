@@ -12,8 +12,8 @@ Wang-Chen et al. 2024), with the command coming from the simulated brain:
   - six leg oscillators in a tripod (front and hind legs of one side with the middle leg of the other);
   - each leg follows a real fly's recorded step (all seven joints, NeuroMechFly's kinematic recording)
     at its oscillator's phase (the adhesive pads stay off while stepping: see PAD_STANCE);
-  - the brain sets the gait every frame from its descending neurons' firing: how fast (P9/DNg97, MDN,
-    and each descending neuron's wiring influence on the leg networks, cpg.py), which way (MDN against
+  - the brain sets the gait every frame from its walking command neurons' firing: how fast (P9/DNg97,
+    MDN, DNa01/DNa02), which way (MDN against
     P9/DNg97: backwards is the step cycle run in reverse), and turning (DNa01/DNa02 left against right:
     the legs on the inside of the turn take shorter strides); and, like a real walking fly, it holds
     its course against turns it didn't command;

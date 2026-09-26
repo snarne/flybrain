@@ -615,7 +615,37 @@ function onBody(b) {
 // keep the fly camera's orbit controls from capturing clicks meant for the overlays
 for (const el of viewFly.querySelectorAll('.decision, .fly-hud'))
   for (const t of ['pointerdown', 'wheel']) el.addEventListener(t, e => e.stopPropagation());
-document.querySelectorAll('[data-exp]').forEach(btn => btn.onclick = () => send({ cmd: 'body', action: btn.dataset.exp, side: btn.dataset.side, home: !!btn.dataset.home }));
+// placing things: food, smells and air patches go where you click on the floor (Lab mode); pressing the
+// button again puts it near the fly
+let placing = null;
+const placeHint = document.getElementById('place-hint');
+function arm(btn) {
+  if (placing) placing.classList.remove('placing');
+  placing = btn;
+  if (btn) btn.classList.add('placing');
+  viewFly.classList.toggle('placing', !!btn);
+  placeHint.hidden = !btn;
+  if (btn) placeHint.textContent = `Click the floor to put the ${btn.textContent.trim().toLowerCase()} there · Esc to cancel`;
+  if (!btn) flyView?.showMarker(null);
+}
+document.querySelectorAll('[data-exp]').forEach(btn => btn.onclick = () => {
+  if (btn.dataset.place && placing !== btn) { arm(btn); return; }
+  arm(null);
+  send({ cmd: 'body', action: btn.dataset.exp, side: btn.dataset.side, home: !!btn.dataset.home });
+});
+addEventListener('keydown', ev => { if (ev.key === 'Escape' && placing) arm(null); });
+let placeDown = null;
+viewFly.addEventListener('pointerdown', ev => { placeDown = [ev.clientX, ev.clientY]; });
+viewFly.addEventListener('pointermove', ev => {
+  if (placing && flyView && !ev.buttons) flyView.showMarker(flyView.pickFloor(ev.clientX, ev.clientY));
+});
+viewFly.addEventListener('pointerup', ev => {
+  if (!placing || !flyView || !placeDown || Math.hypot(ev.clientX - placeDown[0], ev.clientY - placeDown[1]) > 4) return;
+  const p = flyView.pickFloor(ev.clientX, ev.clientY);
+  if (!p) return;
+  send({ cmd: 'body', action: placing.dataset.exp, x: +p.x.toFixed(2), y: +p.y.toFixed(2) });
+  arm(null);
+});
 // body options: physics, leg feedback, built-in rhythms
 const bodyBtns = Object.fromEntries([...document.querySelectorAll('[data-body]')].map(b => [b.dataset.body, b]));
 let bodyOpts = {};
