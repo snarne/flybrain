@@ -639,7 +639,7 @@ design decision, listed live in the "Body link" panel:
 
 | Agent | Fly neurons |
 |---|---|
-| Reading your message | Johnston's organ auditory neurons (the fly's ear) |
+| Reading your message | Johnston's organ auditory neurons (the fly's ear): the half that doesn't feed the giant fibre |
 | Laya hears praise / frustration | sugar / bitter taste neurons |
 | LLM deliberating (thinking tokens) | PFN neurons into the central complex, the action-selection hub |
 | Recalling a memory or a conversation | a sparse, memory-specific 5% of Kenyon cells (mushroom body) |
@@ -650,8 +650,10 @@ design decision, listed live in the "Body link" panel:
 
 The other way round, each message the LLM receives ends with the body's state (behaviour readouts,
 busiest regions), so it knows when its fly is feeding or about to escape. One circuit you'll notice:
-hearing at high intensity triggers the escape neuron, because Johnston's organ feeds the giant
-fibre, as in real flies. So hearing is kept gentle.
+hearing can trigger the escape neuron, because about 90 of the ear's auditory neurons synapse
+straight onto the giant fibre, as in real flies (a loud sound can set off an escape). Driving all of
+them made the fly jump at every message, so a message is heard by the half with the weakest pull on
+the giant fibre: a quiet sound, which still lights up the brain's hearing centres.
 
 To be clear: the fly brain does not do the reasoning or the coding; the LLM does. The brain is the
 body, and its responses come from its real wiring.

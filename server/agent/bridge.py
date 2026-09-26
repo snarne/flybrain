@@ -5,7 +5,8 @@ Agent -> brain. Each part of the agent's work drives a chosen set of real neuron
 does the rest. The choice of neurons is a design decision (shown as such in the UI); what the
 connectome does with the input is the simulation.
 
-  hearing your message      -> Johnston's organ auditory neurons (the fly's ear)
+  hearing your message      -> Johnston's organ auditory neurons (the fly's ear): the half that doesn't feed
+                               the giant fibre (see hear_neurons)
   System 1 tone judgement   -> praise: sugar taste neurons; frustration: bitter; urgency: looming detectors
   System 2 deliberation     -> PFN neurons into the central complex (action selection), while thinking tokens stream
   memory recall / KV restore-> a sparse, memory-specific set of Kenyon cells (the mushroom body's code)
@@ -72,10 +73,38 @@ class Bridge:
             self.world.pending.append({"cmd": "channel", "name": channel, "rate": 0})
 
     # ------------------------------------------------------------ named events
+    def hear_neurons(self):
+        """The auditory Johnston's organ neurons (JO-A/B) that hear a message: the half with the weakest pull
+        on the giant fibres. About 90 of the 500 synapse straight onto the giant fibre (the escape neuron), as
+        in real flies, where a loud sound can set off an escape; driving all of them made the fly jump every
+        time you pressed Send. Hearing a message is meant to be a quiet sound."""
+        if getattr(self, "_hear", None) is None:
+            from scipy import sparse
+            w = self.world
+            jo = np.asarray(self.ch["hear"]["neurons"], np.int64)
+            gf = w.neurons_of_type("DNp01")
+            if not len(gf):
+                self._hear = jo
+                return jo
+            ip, ix, wt = w.wiring
+            N = w.N
+            rows = np.repeat(np.arange(N, dtype=np.int32), np.diff(ip))
+            inp = np.bincount(ix, weights=np.abs(wt), minlength=N)
+            A = sparse.csr_matrix((wt / np.maximum(inp[ix], 1.0), (rows, ix)), shape=(N, N))
+            t = np.zeros(N)
+            t[gf] = 1.0
+            e1 = A @ t
+            e2 = A @ e1
+            e3 = A @ e2
+            pull = (e1 + 0.7 * e2 + 0.5 * e3)[jo]
+            self._hear = np.sort(jo[np.argsort(pull)[: len(jo) // 2]])
+        return self._hear
+
     def hear(self, text):
         c = self.ch["hear"]
         secs = min(3.0, 0.4 + len(text) / 250)
-        self.pulse("hear", c["neurons"], c["rate"], secs, "Hearing your message", c["about"])
+        self.pulse("hear", self.hear_neurons(), c["rate"], secs, "Hearing your message",
+                   c["about"] + " (the half that doesn't drive the escape neuron: a quiet sound)")
 
     def tone(self, d):
         if d["tone"] == "positive":

@@ -607,6 +607,8 @@ def setup_agent():
     system1 = System1()
     bridge = Bridge(world, emit)
     bridge.loop = main_loop
+    import threading
+    threading.Thread(target=bridge.hear_neurons, daemon=True).start()   # ready before the first message
     agent = Agent(world, runtime, LLM(runtime), system1, bridge, emit)
     # start the model automatically only if it's already downloaded (never start a big download unasked)
     key = runtime.cfg.get("model") or runtime.recommended
