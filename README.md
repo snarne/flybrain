@@ -174,7 +174,8 @@ Every frame (30 a second, in simulated time):
    brain computes the next (a 33 ms sensorimotor delay, about a fly's).
 5. **The body → sense organs → nerve cord** (`server/feedback.py`). Each leg's proprioceptors,
    found in BANC by `tools/build_proprio.py` (1,032 neurons), fire from what the physics measured:
-   femoral chordotonal organ claw neurons (joint angle), hook neurons (direction of movement), club
+   femoral chordotonal organ claw neurons (joint angle, range-fractionated, so they're quiet around the
+   standing posture; firing at the slight give of a standing leg set off reflexes that twitched the resting legs), hook neurons (direction of movement), club
    neurons (movement and vibration), hair plates (a joint near the end of its range), campaniform
    sensilla (mostly changes in load) and tarsal bristles (a foot touching down). While the fly makes
    a movement itself, claw and hook output is turned down, as presynaptic inhibition does in real

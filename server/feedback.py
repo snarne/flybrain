@@ -8,7 +8,8 @@ cord like any other input. Tuning follows recordings where they exist (Mamiya et
 Tuthill & Wilson 2016; Zill et al. 2004):
 
   claw  tonic, range-fractionated position: flexion neurons fire as the femur-tibia joint flexes past
-        rest, extension neurons as it extends
+        rest, extension neurons as it extends; each claw neuron covers part of the range, so the
+        population stays quiet around the standing posture (CLAW_START)
   hook  phasic, direction: flexion or extension movement, scaled by speed
   club  movement in either direction, scaled by speed (the organ also senses vibration)
   hp    hair plates: the joint approaching either end of its range
@@ -34,6 +35,9 @@ TONIC_HZ = {"claw": 150.0, "hook": 150.0, "club": 100.0, "hp": 60.0, "cs": 80.0,
 SPEED_FULL = 10.0       # rad/s of joint speed that saturates the movement-sensing neurons
 SPEED_MIN = 1.0         # below this (rad/s) they don't respond
 HP_START = 0.6          # hair plates start firing past this fraction of the joint's walking range
+CLAW_START = 0.35       # claw neurons start firing past this fraction: a standing fly's legs give a little
+                        # under its weight (up to ~0.3), and a tonic response to that set off resistance
+                        # reflexes that twitched the resting legs
 LOAD_FULL = 12.0        # contact force on a leg that saturates the sensilla's tonic response (model units)
 LOAD_RATE_FULL = 150.0  # rate of change of load that saturates their phasic response (units/s)
 CS_TONIC = 0.25         # share of the campaniform response that is tonic
@@ -93,7 +97,8 @@ class Feedback:
                 v = V.get((leg, joint), 0.0)
                 half = max(self.ranges.get(leg, {}).get(joint, {}).get("half", 0.3), 0.05)
                 if organ == "claw":
-                    x = (a if sense == "flexion" else -a if sense == "extension" else abs(a)) / half
+                    x = ((a if sense == "flexion" else -a if sense == "extension" else abs(a)) / half - CLAW_START) \
+                        / (1.0 - CLAW_START)
                 elif organ == "hook":
                     x = (v if sense == "flexion" else -v if sense == "extension" else abs(v)) / SPEED_FULL
                 elif organ == "club":

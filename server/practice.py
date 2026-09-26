@@ -347,9 +347,15 @@ class Worker:
         async with self.lock:
             if not self.alive():
                 await self.start()
-            self.proc.stdin.write((json.dumps(req) + "\n").encode())
-            await self.proc.stdin.drain()
-            line = await self.proc.stdout.readline()
+            try:
+                self.proc.stdin.write((json.dumps(req) + "\n").encode())
+                await self.proc.stdin.drain()
+                line = await self.proc.stdout.readline()
+            except BaseException:
+                # stopped half way (e.g. the chat's Stop): its answer would come back to the next request, so
+                # this copy is replaced
+                self.stop()
+                raise
             if not line:
                 raise RuntimeError("the practice copy stopped")
             return json.loads(line)
