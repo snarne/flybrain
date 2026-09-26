@@ -355,6 +355,12 @@ prompt.addEventListener('keydown', e => {
 $('auto-approve').onchange = e => send({ cmd: 'auto_approve', on: e.target.checked });
 $('bridge-on').onchange = e => send({ cmd: 'bridge', on: e.target.checked });
 $('new-chat').onclick = () => send({ cmd: 'new_chat' });
+$('delete-chat').onclick = () => {
+  if (confirm(`Delete “${$('chat-title').textContent}”? This can't be undone.`)) {
+    send({ cmd: 'delete_chat' });
+    setTimeout(refreshHistory, 500);
+  }
+};
 $('history').onchange = e => { if (e.target.value) send({ cmd: 'open_chat', id: e.target.value }); e.target.value = ''; };
 
 // ------------------------------------------------------------------ conversations

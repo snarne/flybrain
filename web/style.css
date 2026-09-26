@@ -382,3 +382,9 @@ body.mode-agent [data-for="lab"], body.mode-lab [data-for="agent"] { display: no
 .skill-live .m { color: var(--muted); font-size: 11px; line-height: 1.5; }
 #topbar .restart { margin-left: 10px; padding: 2px 10px; font-size: 12px; background: #ffcf5c; color: #1b1400; border: 0; border-radius: 10px; cursor: pointer; }
 #topbar .restart[hidden] { display: none; }
+/* quick body switches on the fly view (both modes) */
+.body-switches { position: absolute; top: 10px; right: 12px; display: flex; gap: 6px; z-index: 3; }
+.body-switches button { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 12px; border: 1px solid #3a4250;
+  background: rgba(20, 24, 32, 0.85); color: var(--muted); cursor: pointer; }
+.body-switches button.on { color: #1b1400; background: #ffcf5c; border-color: #ffcf5c; }
+.body-switches button:disabled { opacity: 0.4; cursor: default; }

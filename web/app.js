@@ -614,7 +614,7 @@ function onBody(b) {
   }
 }
 // keep the fly camera's orbit controls from capturing clicks meant for the overlays
-for (const el of viewFly.querySelectorAll('.decision, .fly-hud'))
+for (const el of viewFly.querySelectorAll('.decision, .fly-hud, .body-switches'))
   for (const t of ['pointerdown', 'wheel']) el.addEventListener(t, e => e.stopPropagation());
 // placing things: food, smells and air patches go where you click on the floor (Lab mode); pressing the
 // button again puts it near the fly
@@ -647,8 +647,11 @@ viewFly.addEventListener('pointerup', ev => {
   send({ cmd: 'body', action: placing.dataset.exp, x: +p.x.toFixed(2), y: +p.y.toFixed(2) });
   arm(null);
 });
-// body options: physics, leg feedback, built-in rhythms
-const bodyBtns = Object.fromEntries([...document.querySelectorAll('[data-body]')].map(b => [b.dataset.body, b]));
+// body options: physics, leg feedback, and the hand-built parts (walking model, flight timer)
+// the same switch can appear twice (on the fly view and in Lab): each key maps to all its buttons
+const bodyBtns = {};
+for (const el of document.querySelectorAll('[data-body]')) (bodyBtns[el.dataset.body] ||= []).push(el);
+const forBtns = (key, fn) => (bodyBtns[key] || []).forEach(fn);
 let bodyOpts = {};
 // what the mushroom body has learned, per odour (Lab mode, Teach it)
 const memEl = document.getElementById('memory');
@@ -671,29 +674,24 @@ function renderMemory(m) {
 }
 function setBodyOpts(ph) {
   bodyOpts = ph;
-  bodyBtns.physics.classList.toggle('on', !!ph.on);
-  bodyBtns.physics.disabled = !ph.available;
-  if (!ph.available) bodyBtns.physics.title = 'Needs the mujoco package (installed with the app); running the kinematic body';
-  bodyBtns.feedback.classList.toggle('on', !!ph.on && ph.feedback > 0);
-  bodyBtns.feedback.disabled = !ph.on;
-  const mode = ph.rhythm || (ph.rhythms ? 'neurons' : 'off');
-  bodyBtns.rhythm.textContent = `Walking model: ${mode === 'off' ? 'off' : 'on'}`;
-  bodyBtns.rhythm.classList.toggle('on', mode !== 'off');
-  if (bodyBtns.flight_timer) {
-    const ft = (ph.assists || {}).flight_timer !== false;
-    bodyBtns.flight_timer.textContent = `Flight timer: ${ft ? 'on' : 'off'}`;
-    bodyBtns.flight_timer.classList.toggle('on', ft);
-  }
+  const walking = (ph.rhythm || 'neurons') !== 'off';
+  const timer = (ph.assists || {}).flight_timer !== false;
+  forBtns('physics', el => {
+    el.classList.toggle('on', !!ph.on);
+    el.disabled = !ph.available;
+    el.textContent = el.dataset.short ? `Physics ${ph.on ? 'on' : 'off'}` : 'Physics';
+    if (!ph.available) el.title = 'Needs the mujoco package (installed with the app); running the kinematic body';
+  });
+  forBtns('feedback', el => { el.classList.toggle('on', !!ph.on && ph.feedback > 0); el.disabled = !ph.on; });
+  forBtns('rhythm', el => { el.textContent = `Walking model ${walking ? 'on' : 'off'}`; el.classList.toggle('on', walking); });
+  forBtns('flight_timer', el => { el.textContent = `Flight timer ${timer ? 'on' : 'off'}`; el.classList.toggle('on', timer); });
 }
-bodyBtns.physics.onclick = () => send({ cmd: 'body', action: 'physics', on: !bodyOpts.on });
-bodyBtns.feedback.onclick = () => send({ cmd: 'body', action: 'feedback', gain: bodyOpts.feedback > 0 ? 0 : 1 });
-if (bodyBtns.flight_timer) bodyBtns.flight_timer.onclick = () =>
-  send({ cmd: 'body', action: 'assist', name: 'flight_timer', on: (bodyOpts.assists || {}).flight_timer === false });
-bodyBtns.rhythm.onclick = () => {
-  const order = ['neurons', 'off'];
-  const next = order[(order.indexOf(bodyOpts.rhythm || 'neurons') + 1) % order.length];
-  send({ cmd: 'body', action: 'rhythm', mode: next });
-};
+forBtns('physics', el => el.onclick = () => send({ cmd: 'body', action: 'physics', on: !bodyOpts.on }));
+forBtns('feedback', el => el.onclick = () => send({ cmd: 'body', action: 'feedback', gain: bodyOpts.feedback > 0 ? 0 : 1 }));
+forBtns('rhythm', el => el.onclick = () =>
+  send({ cmd: 'body', action: 'rhythm', mode: (bodyOpts.rhythm || 'neurons') === 'off' ? 'neurons' : 'off' }));
+forBtns('flight_timer', el => el.onclick = () =>
+  send({ cmd: 'body', action: 'assist', name: 'flight_timer', on: (bodyOpts.assists || {}).flight_timer === false }));
 let demoTimers = [];
 const demoBtn = document.getElementById('demo');
 function stopDemo() {

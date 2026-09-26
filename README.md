@@ -19,7 +19,9 @@ that can teach it new movements.
   in 3D.
 - **Walking commanded by its descending neurons**: when the walking command neurons fire (P9 for
   forwards, the moonwalker neurons for backwards, DNa02 for turning), the six legs step in a tripod
-  with a real fly's recorded steps, as fast, which way and turning as the neurons say.
+  with a real fly's recorded steps, as fast, which way and turning as the neurons say. This walking
+  model and a flight timer are the body's two hand-built parts; each has a switch on the fly view, so
+  you can see what the neurons and muscles do without them.
 - **It learns.** Pair an odour with reward or punishment and the mushroom body's own synapses
   change: dopamine neurons weaken the connections from that odour's Kenyon cells onto the output
   neurons they gate, and not those of other odours.
@@ -34,16 +36,17 @@ that can teach it new movements.
   high as it can, and it plans the movement and says what it should achieve; the engine searches the
   wiring for the neurons that produce it, and the fly practises many variations in background copies
   of itself, scored on what each try achieved. The result is saved as a **skill**: the next time,
-  it's instant. It
-  can also work as a **neuroscientist** on its own nervous system: look up cell types, trace
-  pathways, activate, record and silence neurons, and score the results against real experiments.
+  it's instant. It can also work as a **neuroscientist** on its own nervous system: look up cell
+  types, trace pathways, activate, record and silence neurons, and score the results against real
+  experiments.
 
 ## Setup
 
 ### What you need
 
 - **macOS 14+** (Apple silicon recommended), **Windows 10/11**, or **Linux** (x64 or arm64).
-- **16 GB of RAM** or more. The simulation itself needs about 3 GB; the rest is for the language model.
+- **16 GB of RAM** or more. The simulation itself needs about 3 GB, and each background copy of the fly
+  that practises skills about 1 GB more; the rest is for the language model.
 - About **5 GB of disk** for the app, plus the model you pick (3 to 23 GB).
 - An internet connection for the first run. Afterwards everything runs offline.
 - Nothing else: no Python, Git or GPU drivers to install. The app fetches its own tools into its folder.
@@ -106,16 +109,17 @@ too: open **Use another model** in the same place (details under "Any model" bel
 
 ## What you're looking at
 
-- **The fly** (left or top) is the body. Glowing parts are being driven by their motor neurons.
+- **The fly** (left or top) is the body. Glowing parts are being driven by their motor neurons. The
+  switches at its top right turn the physics, the walking model and the flight timer on and off.
 - **The nervous system** (right or bottom): dots are neurons, coloured by region (brain regions on
   top; the nerve cord's flight, front-, middle- and hind-leg and abdominal parts below). A neuron
   glows when it fires. Cyan marks the pathway being explained or the neurons a skill is driving.
 - **Neurons → muscles** (right) shows how hard each body part's motor neurons are driving its
   muscles right now, plus the brain's main descending command neurons. Click a row to find those
   neurons.
-- **Skills** (right): movements the fly has learned. ▶ replays one.
-- **Agent / Lab** (top): *Agent* is for talking to Fly (chat on the left; skills and the body link on
-  the right). *Lab* is for experiments: put things in the fly's world, do things to it, teach it,
+- **Skills** (right): movements the fly has learned. ▶ replays one, × forgets it.
+- **Agent / Lab** (top): *Agent* is for talking to Fly (chat on the left, with History, New and Delete
+  for conversations; skills and the body link on the right). *Lab* is for experiments: put things in the fly's world, do things to it, teach it,
   activate or silence neurons, and switch body settings (left), with the motor, region and firing
   panels (right). Food, smells and air patches go where you click: press *Fruit smell*, *Sugar drop*,
   *Warm* and so on, then click the floor (press the button again to put it next to the fly; Esc
@@ -241,19 +245,18 @@ skills practise with them off (see Skills), so it's always clear what comes from
   brain's flight power neurons fire only for a fraction of a second after a looming shadow, so without
   the timer the fly falls back after half a second of flight.) With it off, flight power is only what
   the wing power motor neurons give, so a skill can fly, or jump without flying, on its own.
-- **Walking: the walking model is hand-built** (`server/locomotion.py`). The nerve-cord circuits that generate stepping in a fly
-  (central pattern generators) aren't mapped yet, and a leaky integrate-and-fire model doesn't make
-  rhythms by itself (with the walking model off the command neurons only give twitches). What is known is how
+- **Walking: the walking model is hand-built** (`server/locomotion.py`). The nerve-cord circuits that
+  generate stepping in a fly (central pattern generators) aren't mapped yet, and a leaky
+  integrate-and-fire model doesn't make rhythms by itself (with the walking model off the command
+  neurons only give twitches; skills can still walk by driving the leg muscles, see Skills). What is known is how
   the brain commands walking, so that part is the simulated brain's, and the stepping itself is
   modelled the way NeuroMechFly does it:
   - six leg oscillators in a tripod (front and hind legs of one side with the middle leg of the
     other), each leg following a real fly's recorded step, all seven joints (NeuroMechFly's kinematic
     recording, 7 steps a second at full speed here up to 6);
   - every frame the brain sets the gait from its walking command neurons: how fast (P9/DNg97, MDN,
-    DNa01/DNa02; not other descending neurons: an earlier version added every descending neuron's
-    wiring influence on the legs' networks, which counted feeding and grooming neurons too and set the
-    fly walking while it tasted sugar), which way (MDN against
-    P9/DNg97; backwards is the step cycle run in reverse), and turning (DNa01/DNa02 left against
+    DNa01/DNa02, and no other descending neurons, so tasting sugar doesn't set it walking), which way
+    (MDN against P9/DNg97; backwards is the step cycle run in reverse), and turning (DNa01/DNa02 left against
     right; the legs on the inside of the turn take shorter strides, as Rayshubskiy et al. 2020 and
     Yang et al. 2023 found); the walking fly also holds its course against turns it didn't command;
   - each leg's premotor rhythm neurons, picked from the wiring (`server/cpg.py`: interneurons whose
@@ -262,11 +265,7 @@ skills practise with them off (see Skills), so it's always clear what comes from
   - the feet's adhesive pads are off while stepping: in this physics, sticky feet make fast stepping
     chaotic (the fly spins or tips over), while friction alone walks straight.
 
-  An earlier version grew the rhythm from those premotor neurons themselves (mutual inhibition and a
-  tiring current). They alternated, but the six legs didn't coordinate, the steps were weak and the fly
-  could only walk forwards. Another replayed motor-neuron drive learned from recorded steps; it drove
-  only 4 of each leg's 7 joints, so the hind legs dragged and turns went the wrong way. Grooming (aDN)
-  plays a built-in movement while the aDN neurons fire.
+  Grooming is part of the same switch: while the aDN neurons fire, a recorded grooming movement plays.
 
 The **Why?** card appears whenever the body starts a behaviour. It starts at the motor neurons (or
 command neurons) involved and walks backwards through the wiring: at each step, the cell type sending
@@ -320,8 +319,8 @@ before (the learned_avoidance experiment below). Measured on the model, three th
    those neurons' input, and in the spiking model the signal fades at each layer. Training changed
    the command neurons' firing by nothing measurable.
 3. **The fly doesn't steer by smell.** Approach and avoidance are turns towards or away from an
-   odour; in this wiring and model, fruit and CO₂ set the fly walking but not turning (Scoring, below),
-   so there's no odour steering for a memory to change.
+   odour; in this wiring and model, fruit and CO₂ barely reach the walking and steering command neurons
+   (Scoring, below), so there's no odour steering for a memory to change.
 
 Real flies close this loop through circuits downstream of the MBONs (the fan-shaped body, the
 lateral horn, and descending neurons for upwind steering) that the connectome contains but the
@@ -398,10 +397,8 @@ What this says:
   the network seize (sugar on the proboscis sets 28,000 neurons firing within 0.1 s instead of 185)
   and the fly thrashes across the arena with no input at all.
 - **What the wiring doesn't do in this model**, and so the fly doesn't either: it doesn't steer by
-  odours, towards fruit or away from CO₂, and warmth doesn't reach its walking command neurons (an
-  earlier version walked out of warm air and through CO₂ only because any descending activity counted
-  as a walking command); turning stripes
-  make it turn the wrong way, because in the simulation the right-side motion-sensing neurons (HS
+  odours, towards fruit or away from CO₂, and warmth doesn't reach its walking command neurons;
+  turning stripes make it turn the wrong way, because in the simulation the right-side motion-sensing neurons (HS
   cells) respond to both directions and the right DNa02 fires either way; sugar under the feet
   reaches the proboscis motor neuron only through links carrying 0.5-1.4% of each next neuron's input;
   antennal dust reaches the grooming command neurons only through three weak steps. Learning changes

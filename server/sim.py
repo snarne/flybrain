@@ -7,15 +7,13 @@ Eon Systems and others build on (u = v - v_0):
     du/dt = (g - u - a) / t_mbr        (u, g frozen while refractory)
     dg/dt = -g / tau
     da/dt = -a / tau_adapt             (a stays 0 in "paper" mode)
-    db/dt = -b / tau_burst             (b: rhythm neurons only, when the rhythm generators are on; u
-                                        also has -b in its equation)
     spike when u > v_th - v_0  ->  u = 0, g = 0, a += d_adapt, refractory t_rfc
     each presynaptic spike adds  w_syn * (signed synapse count)  to g after t_dly
     stimulated neurons get Poisson input that kicks u by w_syn * f_poi
 
-"paper" mode is the published model. "stable" mode (see README) uses
-FlyWire-annotated transmitter signs and gives spike-frequency adaptation to the
-~6k neurons that otherwise lock into self-sustaining firing after odour input.
+"paper" mode is the published model. "stable" mode (see README) gives spike-frequency adaptation and short-term synaptic
+depression to the ~6k neurons that otherwise lock into self-sustaining firing after
+odour input.
 
 Speed trick (exact, not an approximation): between inputs the equations have a
 closed-form solution, and u can never rise above max(u, g). So a neuron with both
@@ -48,26 +46,22 @@ PARAMS = dict(
     dep_u=0.7,        # short-term synaptic depression of loop neurons' outputs (stable mode):
     dep_rec=400.0,    #   fraction used per spike, recovery time (ms). Stops their burst at input onset
                       #   from igniting thousands of neurons before adaptation has built up
-    tau_burst=150.0,  # ms: a second, faster adaptation current, only in the nerve cord's rhythm
-    d_burst=4.0,      #   neurons (cpg.py): it ends each burst, so rival groups take turns
 )
 TABLE = 60000  # steps (6 s) of precomputed decay factors; older state has fully decayed
 
 
 @njit(inline="always")
-def _catch_up(j, step, u, g, ad, last, Em, Es, Ea, Kg, Ka, bd, Eb, Kb):
+def _catch_up(j, step, u, g, ad, last, Em, Es, Ea, Kg, Ka):
     k = step - last[j]
     if k > 0:
         if k >= Em.shape[0]:
             u[j] = 0.0
             g[j] = 0.0
             ad[j] = 0.0
-            bd[j] = 0.0
         else:
-            u[j] = u[j] * Em[k] + g[j] * Kg[k] - ad[j] * Ka[k] - bd[j] * Kb[k]
+            u[j] = u[j] * Em[k] + g[j] * Kg[k] - ad[j] * Ka[k]
             g[j] = g[j] * Es[k]
             ad[j] = ad[j] * Ea[k]
-            bd[j] = bd[j] * Eb[k]
         last[j] = step
 
 
@@ -76,7 +70,7 @@ def _run(n_steps, u, g, ad, last, refr, refr_steps, indptr, indices, weights,
          stim_idx, stim_p, blocked, ring, ring_n, step0, D,
          out_idx, out_n, act, n_act_arr, in_act, ad_scale,
          Em, Es, Ea, Kg, Ka, theta, d_ad, kick, xdep, tdep, dep_mask, dep_u, dep_rec,
-         bd, burst_scale, d_bd, Eb, Kb, syn_idx, syn_p, syn_w):
+         syn_idx, syn_p, syn_w):
     n_out = out_n[0]
     n_act = n_act_arr[0]
     for s in range(n_steps):
@@ -95,7 +89,7 @@ def _run(n_steps, u, g, ad, last, refr, refr_steps, indptr, indices, weights,
                 tdep[pre] = step
             for k in range(indptr[pre], indptr[pre + 1]):
                 j = indices[k]
-                _catch_up(j, step, u, g, ad, last, Em, Es, Ea, Kg, Ka, bd, Eb, Kb)
+                _catch_up(j, step, u, g, ad, last, Em, Es, Ea, Kg, Ka)
                 gj = g[j] + weights[k] * scale
                 g[j] = gj
                 if not in_act[j] and (gj >= theta or refr[j] > 0):
@@ -107,18 +101,18 @@ def _run(n_steps, u, g, ad, last, refr, refr_steps, indptr, indices, weights,
         for q in range(stim_idx.shape[0]):
             if np.random.random() < stim_p[q]:
                 j = stim_idx[q]
-                _catch_up(j, step, u, g, ad, last, Em, Es, Ea, Kg, Ka, bd, Eb, Kb)
+                _catch_up(j, step, u, g, ad, last, Em, Es, Ea, Kg, Ka)
                 u[j] += kick
                 if not in_act[j]:
                     in_act[j] = True
                     act[n_act] = j
                     n_act += 1
         # 2b) synaptic-style drive: events that add to g like a presynaptic spike would (so inhibition
-        #     can still compete with them), e.g. the summed descending drive to the rhythm neurons
+        #     can still compete with them), e.g. the legs' premotor neurons following the steps (cpg.py)
         for q in range(syn_idx.shape[0]):
             if np.random.random() < syn_p[q]:
                 j = syn_idx[q]
-                _catch_up(j, step, u, g, ad, last, Em, Es, Ea, Kg, Ka, bd, Eb, Kb)
+                _catch_up(j, step, u, g, ad, last, Em, Es, Ea, Kg, Ka)
                 gj = g[j] + syn_w[q]
                 g[j] = gj
                 if not in_act[j] and (gj >= theta or refr[j] > 0):
@@ -133,17 +127,14 @@ def _run(n_steps, u, g, ad, last, refr, refr_steps, indptr, indices, weights,
             if refr[i] > 0:
                 refr[i] -= 1
                 ad[i] = ad[i] * Ea[1]
-                bd[i] = bd[i] * Eb[1]
             else:
-                ui = u[i] * Em[1] + g[i] * Kg[1] - ad[i] * Ka[1] - bd[i] * Kb[1]
+                ui = u[i] * Em[1] + g[i] * Kg[1] - ad[i] * Ka[1]
                 gi = g[i] * Es[1]
                 ai = ad[i] * Ea[1]
-                bd[i] = bd[i] * Eb[1]
                 if ui > theta and not blocked[i]:
                     ui = 0.0
                     gi = 0.0
                     ai = ai + d_ad * ad_scale[i]
-                    bd[i] = bd[i] + d_bd * burst_scale[i]
                     refr[i] = refr_steps[i]
                     ring[slot, c] = i
                     c += 1
@@ -191,10 +182,6 @@ class Brain:
         self.Em, self.Es, self.Ea = np.exp(-t / tm), np.exp(-t / ts), np.exp(-t / ta)
         self.Kg = (ts / (ts - tm)) * (self.Es - self.Em)
         self.Ka = (ta / (ta - tm)) * (self.Ea - self.Em)
-        tb = p["tau_burst"]
-        self.Eb = np.exp(-t / tb)
-        self.Kb = (tb / (tb - tm)) * (self.Eb - self.Em)
-        self.burst_scale = np.zeros(self.N, np.float32)   # set by cpg.py for the rhythm neurons
         self.set_syn_drive({})
         self.ring = np.zeros((self.D, self.N), np.int32)
         self.ad_scale = np.ones(self.N, np.float32) if adapt_mask is None else adapt_mask.astype(np.float32)
@@ -206,37 +193,14 @@ class Brain:
         self.reset()
 
     def set_weights(self, syn_counts):
-        if getattr(self, "_base", None) is not None:        # drop any extra synapses first
-            self.indptr, self.indices = self._base[0], self._base[1]
         self.weights = (syn_counts.astype(np.float32) * self.p["w_syn"] * self.p["w_scale"]).astype(np.float32)
-        self._base = None          # connectome-only arrays, kept while extra synapses are added
         self.csr_version = getattr(self, "csr_version", 0) + 1
 
     def set_connectome(self, indptr, indices, syn_counts):
-        """Swap in different wiring (same neurons), e.g. a shuffled control. Extra synapses are dropped."""
-        self._base = None
+        """Swap in different wiring (same neurons), e.g. a shuffled control."""
         self.indptr = indptr.astype(np.int64)
         self.indices = indices.astype(np.int32)
         self.set_weights(syn_counts)
-
-    def set_extra_synapses(self, pre, post, mv):
-        """Add synapses that aren't in the connectome (mV each; empty removes them), e.g. the model's
-        reciprocal inhibition inside the rhythm generators (cpg.py). The connectome's own stay as they are."""
-        if getattr(self, "_base", None) is None:
-            self._base = (self.indptr, self.indices, self.weights)
-        ip, ix, wt = self._base
-        if len(pre):
-            N = self.N
-            rows = np.repeat(np.arange(N, dtype=np.int64), np.diff(ip))
-            pre = np.asarray(pre, np.int64)
-            rows = np.concatenate([rows, pre])
-            ix = np.concatenate([ix, np.asarray(post, np.int32)])
-            wt = np.concatenate([wt, np.asarray(mv, np.float32)])
-            o = np.argsort(rows, kind="stable")
-            rows, ix, wt = rows[o], ix[o], wt[o]
-            ip = np.searchsorted(rows, np.arange(N + 1)).astype(np.int64)
-        self.indptr, self.indices, self.weights = ip, ix, wt
-        self.csr_version = getattr(self, "csr_version", 0) + 1
 
     def reset(self):
         self.u = np.zeros(self.N, np.float64)
@@ -249,7 +213,6 @@ class Brain:
         self.in_act = np.zeros(self.N, np.bool_)
         self.n_act = np.zeros(1, np.int64)
         self.step_i = 0
-        self.bd = np.zeros(self.N, np.float64)
         self.xdep = np.ones(self.N, np.float64)
         self.tdep = np.zeros(self.N, np.int64)
         self._no_dep = np.zeros(self.N, np.bool_)
@@ -299,7 +262,7 @@ class Brain:
              self.out_idx, self.out_n, self.act, self.n_act, self.in_act, self.ad_scale,
              self.Em, self.Es, self.Ea, self.Kg, self.Ka, self.theta, d_ad, self.kick,
              self.xdep, self.tdep, dep, self.p["dep_u"], self.p["dep_rec"] / self.p["dt"],
-             self.bd, self.burst_scale, self.p["d_burst"], self.Eb, self.Kb, self.syn_idx, self.syn_p, self.syn_w)
+             self.syn_idx, self.syn_p, self.syn_w)
         self.step_i += n
         return self.out_idx[: self.out_n[0]]
 

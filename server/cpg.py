@@ -1,5 +1,5 @@
 """
-The legs' premotor rhythm neurons, found in the nerve cord's wiring, and the descending drive to them.
+The legs' premotor rhythm neurons, found in the nerve cord's wiring.
 
 Which nerve-cord neurons generate the stepping rhythm in Drosophila isn't known. For each leg this
 picks, from the connectome, the excitatory interneurons whose synapses go mostly to that leg's swing
@@ -15,11 +15,6 @@ forwards only. Now the rhythm and coordination come from the walking oscillators
 these neurons follow them: while a leg is in swing its swing group gets synaptic drive, in stance its
 stance group, so the leg's premotor and motor neurons fire in time with its steps (visible in the
 brain and the activity view), through the connectome's own synapses.
-
-Also computed here from the wiring: each descending neuron's summed influence on each leg's rhythm
-neurons through up to three synapses (signed, normalised by each target's input). Weighted by how
-fast the descending neurons fire, this is available as wiring_drive(), but it isn't used to command
-walking: it counts feeding and grooming descending neurons too, which also reach the legs' networks.
 """
 from pathlib import Path
 
@@ -34,10 +29,7 @@ SWING = {"lift": ["trochanter_flexor", "accessory_trochanter_flexor"], "carry": 
 STANCE = {"press": ["trochanter_extensor", "sternotrochanter_extensor"], "pull": ["pleural_remotor_and_abductor", "sternal_posterior_rotator"]}
 GROUP = 6            # neurons per group
 LINKS = 6            # inhibitory link interneurons per direction, per leg (identified, for the record)
-DRIVE_MAX = 3500.0   # events/s: scale of the descending drive (wiring_drive saturates around here)
-DRIVE_UNIT = 200000.0  # events/s per unit of (Hz x influence), before saturation
 FOLLOW_HZ = 2500.0   # events/s (1 mV each) to a leg's swing or stance group while it is in that phase
-RATE_TAU = 0.05      # s, smoothing of the descending neurons' firing rates
 
 
 class CPG:
@@ -92,25 +84,6 @@ class CPG:
         self.rhythm = sorted(taken)
         names = world.tables["type"]
         self.types = {k: sorted({names[world.type[n]] for n in v}) for k, v in self.groups.items()}
-        # descending neurons' net influence on each leg's generator, through up to three synapses
-        dn = np.where(sup == "descending")[0]
-        inp = np.bincount(indices, weights=np.abs(W), minlength=N).astype(np.float32)
-        An = sparse.csr_matrix((W / np.maximum(inp[indices], 1.0), (rows, indices)), shape=(N, N))
-        M = np.zeros((N, len(LEGS)), np.float32)
-        for c, leg in enumerate(LEGS):
-            ns = self.groups[(leg, "swing")] + self.groups[(leg, "stance")]
-            M[ns, c] = 1.0 / max(len(ns), 1)
-        E1 = An @ M
-        E2 = An @ E1
-        E3 = An @ E2
-        E = np.asarray(E1 + 0.7 * E2 + 0.5 * E3, np.float32)
-        keep = np.abs(E[dn]).max(1) > 1e-5
-        self.dn = dn[keep]
-        self.E = E[self.dn]                       # (descending neurons) x (legs)
-        self.dn_of = np.full(N, -1, np.int64)
-        self.dn_of[self.dn] = np.arange(len(self.dn))
-        self.dn_rate = np.zeros(len(self.dn))
-        self.drive = np.zeros(len(LEGS))
         self.on = False
         self._ad = self._dep = None
         self._sent = None
@@ -124,36 +97,14 @@ class CPG:
         if self._ad is None:
             self._ad = b.ad_scale[R].copy()
             self._dep = b.dep_mask[R].copy()
-        b.burst_scale[:] = 0.0
         if self.on:
             b.ad_scale[R] = 0.0
             b.dep_mask[R] = False
         else:
             b.ad_scale[R] = self._ad
             b.dep_mask[R] = self._dep
-        if getattr(b, "_base", None) is not None:
-            b.set_extra_synapses([], [], [])
-        self.dn_rate[:] = 0
-        self.drive[:] = 0
         self._sent = None
         b.set_syn_drive({}, "cpg")
-
-    def update(self, spikes, dt):
-        """After each brain frame: the descending neurons' rates -> their wiring influence on each leg."""
-        if not self.on:
-            return
-        k = self.dn_of[spikes]
-        k = k[k >= 0]
-        inst = np.bincount(k, minlength=len(self.dn)) / max(dt, 1e-3)
-        a = 1.0 - np.exp(-dt / RATE_TAU)
-        self.dn_rate += a * (inst - self.dn_rate)
-        self.drive = self.dn_rate @ self.E
-
-    def wiring_drive(self):
-        """0..1: how strongly the descending neurons now drive the legs' rhythm neurons, by the wiring."""
-        if not self.on:
-            return 0.0
-        return float(np.mean(np.tanh(np.clip(self.drive, 0, None) * DRIVE_UNIT / DRIVE_MAX)))
 
     def follow(self, walker):
         """Drive each leg's swing or stance group, whichever phase its oscillator is in."""

@@ -24,8 +24,6 @@ Nothing here moves the fly. Where it goes is up to its brain and legs.
 """
 import math
 
-import numpy as np
-
 AIR_T, AIR_RH = 25.0, 50.0       # room temperature (C) and humidity (%)
 ZONE_R, EDGE = 6.0, 1.5          # zone radius and the width of its soft edge (mm)
 ZONE_DT, ZONE_DRH = 10.0, 40.0   # how much warmer/cooler, wetter/drier a zone is

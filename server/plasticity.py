@@ -47,7 +47,6 @@ BASE_HZ = 0.0        # background input to MBONs (events/s, 1 mV each; 1400 give
 class MushroomBody:
     def __init__(self, world):
         self.w = world
-        N = world.N
         names = np.array(world.tables["type"])
         cls = np.array(world.tables["class"])[world.cls]
         typ = names[world.type].astype(str)

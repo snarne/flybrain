@@ -31,7 +31,7 @@ async def main(names):
     import app
     w, b, sk = app.world, app.body, app.skills
     print(f"body: {'physical' if b.phys else 'kinematic'}", flush=True)
-    b.rhythms = False            # no reflexes interrupting practice
+    b.set_assist("walking", False)   # no walking model or grooming playback interrupting practice
     stop = False
 
     async def frames():

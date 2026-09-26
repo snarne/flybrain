@@ -279,7 +279,7 @@ CONTROLS = {"rest", "bitter_mouth", "bitter_no_feed", "fruit_calm", "geosmin_cal
 
 # ---------------------------------------------------------------------------- running
 class Rig:
-    def __init__(self, body_kind, rhythms, feedback, flight_timer=True):
+    def __init__(self, body_kind, rhythm, feedback, flight_timer=True):
         t = time.time()
         import app
         self.app = app
@@ -287,7 +287,7 @@ class Rig:
         on = self.body.set_physics(body_kind == "physics")
         if body_kind == "physics" and not on:
             sys.exit(f"physics body unavailable: {self.body.phys_error}")
-        self.body.set_rhythm(rhythms if isinstance(rhythms, str) else ("neurons" if rhythms else "off"))
+        self.body.set_rhythm(rhythm)
         self.body.set_feedback(feedback)
         self.body.set_assist("flight_timer", flight_timer)
         self.kind = "physics" if on else "kinematic"

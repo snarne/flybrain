@@ -41,6 +41,11 @@
     <div id="fly-senses" class="fly-senses"></div>
   </div>
   <div id="decision" class="decision" hidden></div>
+  <div class="body-switches" role="group" aria-label="Body">
+    <button data-body="physics" data-short="1" title="Physical body: gravity, contacts and friction (MuJoCo). Off: joint angles straight from the muscles.">Physics on</button>
+    <button data-body="rhythm" title="Hand-built walking model: when the walking command neurons fire, the legs step with a real fly's recorded steps. Off: the legs do only what their motor neurons do.">Walking model on</button>
+    <button data-body="flight_timer" title="Hand-built flight timer: a jump starts flight and flight power is held at cruise for 1.5 s. Off: flight power is only what the wing power motor neurons give.">Flight timer on</button>
+  </div>
 </div>
 
 <div id="runaway" hidden>
@@ -61,6 +66,7 @@
       <span id="chat-title">New conversation</span>
       <select id="history" title="Past conversations"><option value="">History</option></select>
       <button id="new-chat" class="btn" title="Start a new conversation">New</button>
+      <button id="delete-chat" class="btn" title="Delete this conversation">Delete</button>
     </div>
     <div id="chat-log" aria-live="polite"></div>
     <form id="composer">

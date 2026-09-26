@@ -15,7 +15,6 @@ import asyncio
 import json
 import platform
 import re
-import sys
 import time
 import uuid
 from pathlib import Path
@@ -155,6 +154,26 @@ class Agent:
         await self.llm.slot("erase")
         self.emit({"type": "conversation", "id": self.conv.id, "title": self.conv.title, "log": self.conv.log})
         await self.restore_kv()
+
+    async def delete_conversation(self, cid=None):
+        """Delete a conversation (the current one if no id) and its saved KV cache; open the newest left."""
+        if self.busy:
+            return
+        cid = cid or self.conv.id
+        if not re.fullmatch(r"[\w-]+", str(cid)):
+            return
+        for f in (CONV_DIR / f"{cid}.json", KV_DIR / f"{cid}.bin"):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        if cid == self.conv.id:
+            self.kv_loaded_for = None
+            await self.llm.slot("erase")
+            left = Conversation.list_all()
+            self.conv = Conversation.load(left[0]["id"]) if left else Conversation()
+            self.emit({"type": "conversation", "id": self.conv.id, "title": self.conv.title, "log": self.conv.log})
+            await self.restore_kv()
 
     async def restore_kv(self):
         """Bring this conversation's saved KV cache back into the model, if it matches."""

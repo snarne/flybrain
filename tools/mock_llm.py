@@ -58,7 +58,7 @@ def plan(messages, thinking):
         return reasoning, "Let me show you on my body.", ("body_experiment", {"experiment": "threat_left"})
     for sense in ("sugar", "bitter", "looming", "touch"):
         if sense in user:
-            return reasoning, f"Let me try that with my body.", ("stimulate_senses", {"sense": sense, "seconds": 1})
+            return reasoning, "Let me try that with my body.", ("stimulate_senses", {"sense": sense, "seconds": 1})
     return reasoning, "Hi! I'm the mock model. Ask me to write code, or to taste sugar.", None
 
 

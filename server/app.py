@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import calibration
@@ -331,8 +331,6 @@ class World:
         # command neuron, whoever drives it (the walking and turning skills activate them)
         self.ro_all = a * self.ro_all + (1 - a) * ra / self.ro_sizes / (sim_ms / 1000.0)
         self.motor.update(spk, sim_ms / 1000.0)
-        if getattr(self, "cpg", None) is not None:
-            self.cpg.update(spk, sim_ms / 1000.0)
         if getattr(self, "mb", None) is not None:
             self.mb.update(spk, sim_ms / 1000.0)
         self.hist.append((t, sim_ms, reg, ro))
@@ -527,7 +525,7 @@ from skills import SkillEngine  # noqa: E402
 from cpg import CPG  # noqa: E402
 from plasticity import MushroomBody  # noqa: E402
 
-world.cpg = CPG(world)   # the nerve cord's rhythm generators (on when the body's rhythm is "neurons")
+world.cpg = CPG(world)   # the legs' premotor neurons, following the walking model's steps (when it's on)
 world.mb = MushroomBody(world)   # dopamine-gated learning at the mushroom body's KC -> MBON synapses
 body = Body(world)
 world.body = body  # so the agent's tools can run experiments on it
@@ -552,10 +550,8 @@ def _do_body_command(c):
     a = c.get("action")
     if a == "physics":                       # {"cmd":"body","action":"physics","on":true}
         body.set_physics(bool(c.get("on", True)))
-    elif a == "rhythm":                      # {"cmd":"body","action":"rhythm","mode":"neurons"|"replay"|"off"}
+    elif a == "rhythm":                      # {"cmd":"body","action":"rhythm","mode":"neurons"|"off"}: the walking model
         body.set_rhythm(c.get("mode", "neurons"))
-    elif a == "rhythms":                     # older form: on = replayed rhythms, off = none
-        body.rhythms = bool(c.get("on", True))
     elif a == "feedback":                    # leg sense organs -> nerve cord, gain 0..2
         body.set_feedback(float(c.get("gain", 1.0)))
     elif a == "forget":                      # undo everything the mushroom body has learned
@@ -659,6 +655,8 @@ async def handle_agent_command(c):
         await agent.open_conversation(None)
     elif cmd == "open_chat":
         await agent.open_conversation(c["id"])
+    elif cmd == "delete_chat":               # {"cmd":"delete_chat","id":...} (no id: the open one)
+        await agent.delete_conversation(c.get("id"))
     elif cmd == "model_setup":                # one of the built-in models
         runtime.choose_builtin(c.get("model"))
     elif cmd == "model_custom":               # any other: {"kind": "hf"|"path"|"server", "value": ..., "model", "api_key"}

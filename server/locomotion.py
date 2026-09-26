@@ -74,12 +74,11 @@ class Walker:
         self.why = ""
 
     # ------------------------------------------------------------ the brain's command, once a frame
-    def command(self, r, wiring_drive, dt, yaw_rate=0.0):
-        """r: readouts (Hz); wiring_drive: 0..1 from all descending neurons' influence on the leg networks;
-        yaw_rate: the body's own turning (rad/s, + left), for holding a course."""
+    def command(self, r, dt, yaw_rate=0.0):
+        """r: readouts (Hz); yaw_rate: the body's own turning (rad/s, + left), for holding a course."""
         fwd, back = r.get("forward", 0.0), r.get("backward", 0.0)
         tl, tr = r.get("turn_l", 0.0), r.get("turn_r", 0.0)
-        c = max(fwd, back, 0.7 * max(tl, tr)) + FULL_HZ * wiring_drive
+        c = max(fwd, back, 0.7 * max(tl, tr))
         if self.walking:
             self.walking = c > STOP_HZ
         else:
@@ -102,8 +101,6 @@ class Walker:
             parts.append(f"MDN backward {back:.0f} Hz")
         if abs(tl - tr) > 5:
             parts.append(f"DNa01/02 {'left' if tl > tr else 'right'} ahead by {abs(tl - tr):.0f} Hz")
-        if wiring_drive > 0.05:
-            parts.append("other descending neurons")
         self.why = ", ".join(parts)
 
     def amp(self, leg):

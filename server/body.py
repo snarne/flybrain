@@ -95,16 +95,7 @@ class Body:
         self.pose = {"x": 0.0, "y": 0.0, "heading": 0.0}      # kinematic body's place in the arena
         self.reset()
 
-    @property
-    def rhythms(self):             # older callers: rhythms on/off
-        return self.rhythm != "off"
-
-    @rhythms.setter
-    def rhythms(self, on):
-        self.set_rhythm("neurons" if on else "off")
-
     def set_rhythm(self, mode):
-        mode = "neurons" if mode == "replay" else mode      # the older replayed-steps setting
         if mode not in RHYTHMS:
             return
         self.rhythm = mode
@@ -195,7 +186,6 @@ class Body:
             if home:
                 self.phys.reset(pos=(0.0, 0.0), heading=0.0)
             elif self.sensed is not None:
-                th = self.sensed["thorax"]
                 self.phys.reset(pos=(self.sensed["pos"][0], self.sensed["pos"][1]), heading=self.sensed["heading"])
             else:
                 self.phys.reset()
@@ -310,14 +300,12 @@ class Body:
         W = self.walker
         moving_skill = eng is not None and eng.state and not eng.state.get("command")
         if walking_model and not moving_skill:
-            cpg = getattr(self.w, "cpg", None)
+            # only the walking and steering command neurons command walking (other descending neurons also
+            # reach the legs' networks: counting them set the fly walking while it tasted sugar)
             r_all = self.w.all_readouts() if hasattr(self.w, "all_readouts") else r
-            # only the walking and steering command neurons command walking: the summed wiring influence of
-            # all descending neurons on the legs' networks (cpg.wiring_drive) also counted feeding and
-            # grooming neurons, and set the fly walking while it tasted sugar or had dust on its antennae
-            W.command(r_all, 0.0, dt, yaw_rate=-self.ball[1])
+            W.command(r_all, dt, yaw_rate=-self.ball[1])
         else:
-            W.command({}, 0.0, dt)
+            W.command({}, dt)
         if cpg_follow := getattr(self.w, "cpg", None):
             cpg_follow.follow(W)
         if rx and eng is not None and not eng.state and not eng.busy and eng.get(rx[0]):
@@ -527,7 +515,7 @@ class Body:
     def physics_info(self):
         ph = self.phys
         info = {"on": ph is not None, "available": physics_mod.available(), "error": self.phys_error,
-                "rhythm": self.rhythm, "rhythms": self.rhythms, "feedback": self.fb.gain,
+                "rhythm": self.rhythm, "feedback": self.fb.gain,
                 "assists": dict(self.assists), "assist_override": self.assist_override}
         if ph is not None:
             info.update({"cost": round(ph.cost, 2), "touch": self.sensed["touch"] if self.sensed else {},
