@@ -5,6 +5,7 @@ Score the simulated fly against published experiments.
     uv run tools/benchmark.py --body kinematic
     uv run tools/benchmark.py --rhythm off          # no walking model: the connectome alone moves the legs
     uv run tools/benchmark.py --flight-timer off    # no flight timer: flight power only from the motor neurons
+    uv run tools/benchmark.py --sense-boost off     # no sense boost: only what the spiking network carries
     uv run tools/benchmark.py --feedback 0          # physical body, leg sense organs disconnected
     uv run tools/benchmark.py --only p9_forward,mdn_backward --repeats 1
     uv run tools/benchmark.py --variant shuffled    # control: the same neurons, randomly rewired
@@ -279,7 +280,7 @@ CONTROLS = {"rest", "bitter_mouth", "bitter_no_feed", "fruit_calm", "geosmin_cal
 
 # ---------------------------------------------------------------------------- running
 class Rig:
-    def __init__(self, body_kind, rhythm, feedback, flight_timer=True):
+    def __init__(self, body_kind, rhythm, feedback, flight_timer=True, sense_boost=True):
         t = time.time()
         import app
         self.app = app
@@ -290,6 +291,7 @@ class Rig:
         self.body.set_rhythm(rhythm)
         self.body.set_feedback(feedback)
         self.body.set_assist("flight_timer", flight_timer)
+        self.body.set_assist("sense_boost", sense_boost)
         self.kind = "physics" if on else "kinematic"
         print(f"loaded in {time.time() - t:.1f} s: {self.kind} body, rhythm: {self.body.rhythm}"
               + (f", leg feedback x{feedback:g}" if on else ""), flush=True)
@@ -390,6 +392,8 @@ def main():
     ap.add_argument("--feedback", type=float, default=1.0)
     ap.add_argument("--flight-timer", choices=["on", "off"], default="on",
                     help="the hand-built flight timer (a jump starts flight, power held at cruise)")
+    ap.add_argument("--sense-boost", choices=["on", "off"], default="on",
+                    help="the hand-built sense boost (the senses' paths to the command neurons strengthened)")
     ap.add_argument("--only", default="")
     ap.add_argument("--repeats", type=int, default=3, help="runs per experiment (the model is noisy; scores are averaged)")
     ap.add_argument("--variant", choices=["real", "shuffled", "no_inhibition"], default="real",
@@ -398,7 +402,7 @@ def main():
     ap.add_argument("--ablate", default="", help="silence neuron groups, e.g. vision,giant_fibre (or cell types)")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
-    rig = Rig(a.body, a.rhythm, a.feedback, a.flight_timer == "on")
+    rig = Rig(a.body, a.rhythm, a.feedback, a.flight_timer == "on", a.sense_boost == "on")
     if a.variant != "real":
         rig.world.set_variant(a.variant, a.seed)
         print(f"wiring: {a.variant} ({rig.world.VARIANTS[a.variant]})", flush=True)
@@ -431,13 +435,14 @@ def main():
     ctl = [r["score"] for r in rows if r["key"] in CONTROLS]
     behaviours = float(np.mean(beh)) if beh else None
     controls = float(np.mean(ctl)) if ctl else None
-    cfg = {"body": rig.kind, "rhythm": a.rhythm, "flight_timer": a.flight_timer,
+    cfg = {"body": rig.kind, "rhythm": a.rhythm, "flight_timer": a.flight_timer, "sense_boost": a.sense_boost,
            "feedback": a.feedback if rig.kind == "physics" else None,
            "variant": a.variant, "ablate": ablate}
     print(f"\nTOTAL {total:.2f} over {len(rows)} experiments  ({cfg})")
     if beh and ctl:
         print(f"  behaviours {behaviours:.2f} ({len(beh)}), controls {controls:.2f} ({len(ctl)})")
     name = f"{rig.kind}-rhythm_{a.rhythm}-fb_{a.feedback:g}" + ("-no_flight_timer" if a.flight_timer == "off" else "") \
+        + ("-no_sense_boost" if a.sense_boost == "off" else "") \
         + (f"-{a.variant}" if a.variant != "real" else "") \
         + "".join(f"-no_{g}" for g in ablate)
     out = Path(a.out) if a.out else ROOT / "data" / "benchmark" / f"{name}.json"

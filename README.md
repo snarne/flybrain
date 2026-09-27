@@ -20,11 +20,13 @@ that can teach it new movements.
 - **Walking commanded by its descending neurons**: when the walking command neurons fire (P9 for
   forwards, the moonwalker neurons for backwards, DNa02 for turning), the six legs step in a tripod
   with a real fly's recorded steps, as fast, which way and turning as the neurons say. This walking
-  model and a flight timer are the body's two hand-built parts; each has a switch on the fly view, so
-  you can see what the neurons and muscles do without them.
-- **It learns.** Pair an odour with reward or punishment and the mushroom body's own synapses
-  change: dopamine neurons weaken the connections from that odour's Kenyon cells onto the output
-  neurons they gate, and not those of other odours.
+  model, a flight timer and a sense boost (below) are the body's three hand-built parts; each has a
+  switch on the fly view, so you can see what the neurons and muscles do without them.
+- **It learns, and acts on it.** Pair an odour with reward or punishment and the mushroom body's own
+  synapses change: dopamine neurons weaken the connections from that odour's Kenyon cells onto the
+  output neurons they gate, and not those of other odours. With the sense boost, which strengthens the
+  connectome's own paths from smell and temperature to the walking and steering command neurons, the
+  fly walks to fruit, backs away from CO₂, leaves warm air, and avoids an odour it was punished with.
 - **A scoring suite** runs the experiments that were done on real flies (activate the moonwalker
   neurons, show a looming shadow, condition an odour, ...) and scores what the model does, so every
   change can be checked against biology. The same suite runs on **controls**: the wiring randomly
@@ -110,7 +112,8 @@ too: open **Use another model** in the same place (details under "Any model" bel
 ## What you're looking at
 
 - **The fly** (left or top) is the body. Glowing parts are being driven by their motor neurons. The
-  switches at its top right turn the physics, the walking model and the flight timer on and off.
+  switches at its top right turn the physics, the walking model, the flight timer and the sense boost on
+  and off.
 - **The nervous system** (right or bottom): dots are neurons, coloured by region (brain regions on
   top; the nerve cord's flight, front-, middle- and hind-leg and abdominal parts below). A neuron
   glows when it fires. Cyan marks the pathway being explained or the neurons a skill is driving.
@@ -212,8 +215,8 @@ itself (a 200 Hz oscillation of the flight muscles, shown slowed down).
 **Body buttons** (under the fly): *Physics* switches between the physical body and a kinematic one
 (joint angles straight from the muscles, movement estimated from leg sweeps; also used when MuJoCo
 isn't installed, or with `FLYBRAIN_BODY=kinematic`). *Leg feedback* connects or disconnects the
-legs' sense organs. *Walking model* and *Flight timer* switch the two hand-built parts (below) on or
-off. *Re-centre* puts the fly back in the middle.
+legs' sense organs. *Walking model*, *Flight timer* and *Sense boost* switch the three hand-built parts (below) on
+or off. *Re-centre* puts the fly back in the middle.
 
 What the wiring produces, checked live and with `tools/validate.py`:
 
@@ -223,15 +226,16 @@ What the wiring produces, checked live and with `tools/validate.py`:
 | Sugar + bitter | feeding suppressed | bitter neurons inhibit the feeding pathway |
 | Threat from either side | escape jump, a couple of seconds' flight, landing on its feet | LPLC2 → giant fibre → jump motor neuron (TTMn); LPLC2 → DNp06 → wing power motor neurons |
 | Activate P9 / MDN / DNa02 / aDN | walks forwards / backs up / turns that way / grooms its antennae | the command neurons you drove |
-| Warm air | the brain responds; the walking command neurons don't | |
+| Warm air | backs and turns out of it, with the sense boost (without it, the command neurons don't respond) | hot cells → thermosensory projection neurons → ... → the other side's DNa02 and MDN (strengthened by the boost) |
 | Sugar under the feet | the feet taste it, but the proboscis doesn't extend: in this model the tarsal taste signal doesn't reach MN9 (in real flies it does) | |
 | Small target darting ahead-left or right | turns towards it | LC10a → AOTU025 → DNa02 on that side, the pathway that steers male flies following a female (Ribeiro et al. 2018; Hindmarsh Sten et al. 2021) |
 | Fruit odour + Punish (or Reward) | that odour's Kenyon cell → output neuron synapses weaken; other odours' much less (see Learning) | ORNs → projection neurons → Kenyon cells; PPL1 (or PAM) dopamine at the output synapses |
-| Odours, humidity | the brain responds (antennal lobe, lateral horn, mushroom body); the walking command neurons hardly do, so the fly doesn't move towards or away | |
+| Fruit odour / CO₂ | turns and walks towards fruit, backs away from CO₂, with the sense boost; without it the brain responds (antennal lobe, lateral horn, mushroom body) but the command neurons hardly do | ORNs → projection neurons → ... → DNa02 on the same side / MDN (strengthened by the boost) |
 | Antenna dust | leg twitches only; the touch → grooming pathway is too weak in this wiring to reach the aDN command neurons | |
 
-Three things to know, two of them **hand-built parts** of the body. Each can be switched off, and
-skills practise with them off (see Skills), so it's always clear what comes from the connectome:
+Things to know, including the **hand-built parts** of the body: the flight timer, the walking model
+and the sense boost (see Scoring). Each can be switched off, and skills practise with them off (see
+Skills), so it's always clear what comes from the connectome:
 
 - **Gap junctions.** The giant fibre drives the jump motor neuron mainly through electrical synapses,
   which an electron-microscopy connectome cannot see. Those few known ones (giant fibre → TTMn and
@@ -307,8 +311,9 @@ generic adaptation, which projection neurons, KCs and APL are exempt from. Now f
 (12%), CO₂ ~45 (8 shared with fruit), and 3 fruit + punishment pairings weaken fruit's input to the
 punishment-gated MBONs by ~80% and CO₂'s by ~20%.
 
-What doesn't follow yet: the fly's behaviour. After training, it approaches fruit about as much as
-before (the learned_avoidance experiment below). Measured on the model, three things stop it:
+Behaviour follows with the sense boost on (see Scoring): after three fruit + punishment pairings the fly
+approaches fruit half as much. In the spiking network alone it doesn't, and measured on the model, three
+things stop it:
 
 1. **The output neurons barely fire.** Fruit at the antennae makes the 110 MBONs fire 9 spikes in a
    second in total (real ones fire spontaneously, several to tens of spikes a second each); the learned weakening takes that to
@@ -324,7 +329,10 @@ before (the learned_avoidance experiment below). Measured on the model, three th
 
 Real flies close this loop through circuits downstream of the MBONs (the fan-shaped body, the
 lateral horn, and descending neurons for upwind steering) that the connectome contains but the
-spiking model doesn't carry at these strengths.
+spiking model doesn't carry at these strengths. The sense boost stands in for them: it reads each
+odour's learned change from the KC → MBON synapses and steers away from it (punishment) or towards it
+(reward). The **Strength** slider under Teach it sets how long each Reward or Punish lasts (longer
+changes the synapses more); the memory panel shows each odour on one scale from avoid to seek.
 
 ## Scoring against real experiments
 
@@ -340,42 +348,47 @@ network passes every control.
 uv run tools/benchmark.py                          # physical body, walking on (~15 min)
 uv run tools/benchmark.py --rhythm off             # no walking model: the connectome alone moves the legs
 uv run tools/benchmark.py --flight-timer off       # no flight timer: flight power only from the motor neurons
+uv run tools/benchmark.py --sense-boost off        # no sense boost: only what the spiking network carries
 uv run tools/benchmark.py --variant shuffled       # control wiring (below)
 uv run tools/benchmark.py --ablate giant_fibre     # silence neurons: vision, mushroom_body, descending,
                                                    # giant_fibre, antennal_lobe, lateral_horn, or a cell type
 uv run tools/benchmark.py --only loom_left,learn_punish --repeats 1
 ```
 
-Results at the time of writing (physical body, leg feedback on). *Walking off* is the connectome
-without the stepping model; *shuffled* is the connectome with every synapse's target reassigned at
-random, keeping each neuron's number of inputs and outputs, its transmitter and each synapse's
-strength (and the leg networks and mushroom body re-read from that wiring):
+Results at the time of writing (physical body, leg feedback on, 3 runs each). *All on* is the app as it
+starts, with its three hand-built parts (walking model, flight timer, sense boost). *No sense boost* and
+*No walking model* switch one of them off. *Shuffled* is the connectome with every synapse's target
+reassigned at random, keeping each neuron's number of inputs and outputs, its transmitter and each
+synapse's strength (the leg networks, mushroom body and sense boost re-read from that wiring):
 
-| Experiment | Real flies | Walking on | Walking off | Shuffled |
-|---|---|---|---|---|
-| **Activating command neurons** | | | | |
-| P9 (DNp09) | walk forwards (Bidaye et al. 2020) | 0.80 (+3.9 mm/s) | 0.00 | 1.00 |
-| MDN | walk backwards (Bidaye et al. 2014) | 1.00 (−6.5 mm/s) | 0.00 | 1.00 |
-| DNa02, left / right | turn that way (Rayshubskiy et al. 2020) | 1.00 / 0.96 (0.6-0.8 rad/s) | 0.00 / 0.00 | 1.00 / 1.00 |
-| The giant fibre | escape jump within ms (von Reyn et al. 2014) | 1.00 | 1.00 | 0.00 |
-| aDN (DNg62) | antennal grooming (Hampel et al. 2015) | 1.00 | 1.00 | 1.00 |
-| **Senses → behaviour** | | | | |
-| Looming shadow, left / right | escape takeoff before contact | 1.00 / 1.00 | 0.67 / 1.00 | 0.00 / 0.00 |
-| Looming shadow | takes off, flies away, lands on its feet (Card & Dickinson 2008) | 1.00 (2.5 s airborne) | 1.00 | 0.00 |
-| Small target darting ahead-left / right | turns towards it (Ribeiro et al. 2018) | 1.00 / 1.00 (+91° / +59°) | 0.13 / 0.00 | 0.07 / 0.01 |
-| Sugar on the proboscis | extension (Shiu et al. 2024) | 1.00 | 1.00 | 0.00 |
-| Sugar under the front feet | extension (Dethier 1976) | 0.00 | 0.00 | 0.00 |
-| Dust on the antennae | antennal grooming (Seeds et al. 2014) | 0.00 | 0.00 | 0.00 |
-| Warm zone around it | walks out of it (Simões et al. 2021) | 0.00 | 0.00 | 0.00 |
-| CO₂ source ahead | moves away (Suh et al. 2004) | 0.00 | 0.00 | 0.00 |
-| Fruit odour 6 mm to the left / right | turns and walks towards it | 0.02 / 0.01 | 0.03 / 0.00 | 0.00 / 0.02 |
-| Stripes turning left | turns with them (optomotor) | 0.00 | 0.11 | 0.01 |
-| Fruit paired 3× with PPL1, CO₂ unpaired | paired odour's KC → MBON synapses weaken (Hige et al. 2015) | 1.00 (−82% vs −17%) | 1.00 | 0.00 |
-| The same with PAM (reward) | the same in reward compartments (Cohn et al. 2015) | 1.00 (−80% vs −11%) | 1.00 | 0.00 |
-| Fruit approach before / after punishment pairings | approaches less (Tully & Quinn 1985) | 0.00 | 0.00 | 0.01 |
-| **Controls** (8): no input; bitter on the proboscis or under the feet; fruit, geosmin, CO₂, heat, cold | stand still, don't feed, don't take off | 0.99 | 1.00 | 1.00 |
-| **Behaviours, activating command neurons** (6) | | **0.96** | 0.33 | 0.83 |
-| **Behaviours, from the senses** (16) | | **0.50** | 0.37 | **0.01** |
+| Experiment | Real flies | All on | No sense boost | No walking model | Shuffled |
+|---|---|---|---|---|---|
+| **Activating command neurons** | | | | | |
+| P9 (DNp09) | walk forwards (Bidaye et al. 2020) | 0.78 (+3.7 mm/s) | 0.80 | 0.00 | 1.00 |
+| MDN | walk backwards (Bidaye et al. 2014) | 1.00 (−5.9 mm/s) | 1.00 | 0.00 | 1.00 |
+| DNa02, left / right | turn that way (Rayshubskiy et al. 2020) | 1.00 / 0.93 (0.5-0.8 rad/s) | 1.00 / 0.96 | 0.00 / 0.00 | 1.00 / 1.00 |
+| The giant fibre | escape jump within ms (von Reyn et al. 2014) | 1.00 | 1.00 | 1.00 | 0.00 |
+| aDN (DNg62) | antennal grooming (Hampel et al. 2015) | 1.00 | 1.00 | 1.00 | 1.00 |
+| **Senses → behaviour** | | | | | |
+| Looming shadow, left / right | escape takeoff before contact | 1.00 / 1.00 | 1.00 / 1.00 | 0.67 / 1.00 | 0.00 / 0.00 |
+| Looming shadow | takes off, flies away, lands on its feet (Card & Dickinson 2008) | 1.00 (2.5 s airborne) | 1.00 | 1.00 | 0.00 |
+| Small target darting ahead-left / right | turns towards it (Ribeiro et al. 2018) | 0.89 / 0.92 (+45° / +40°) | 1.00 / 1.00 | 0.13 / 0.00 | 0.07 / 0.01 |
+| Sugar on the proboscis | extension (Shiu et al. 2024) | 1.00 | 1.00 | 1.00 | 0.00 |
+| Sugar under the front feet | extension (Dethier 1976) | 0.00 | 0.00 | 0.00 | 0.00 |
+| Dust on the antennae | antennal grooming (Seeds et al. 2014) | 0.02 | 0.00 | 0.00 | 0.00 |
+| Warm zone around it | walks out of it (Simões et al. 2021) | 1.00 | 0.00 | 0.00 | 1.00* |
+| CO₂ source ahead | moves away (Suh et al. 2004) | 1.00 (backs off 11.5 mm) | 0.00 | 0.00 | 0.00 (walks into it) |
+| Fruit odour 6 mm to the left / right | turns and walks towards it | 0.99 / 0.44 | 0.02 / 0.01 | 0.03 / 0.00 | 0.08 / 0.06 |
+| Stripes turning left | turns with them (optomotor) | 0.00 | 0.00 | 0.11 | 0.01 |
+| Fruit paired 3× with PPL1, CO₂ unpaired | paired odour's KC → MBON synapses weaken (Hige et al. 2015) | 1.00 (−81% vs −17%) | 1.00 | 1.00 | 0.00 |
+| The same with PAM (reward) | the same in reward compartments (Cohn et al. 2015) | 1.00 (−79% vs −12%) | 1.00 | 1.00 | 0.00 |
+| Fruit approach before / after punishment pairings | approaches less (Tully & Quinn 1985) | 1.00 (5.2 → 2.6 mm) | 0.00 | 0.00 | 0.15 |
+| **Controls** (8): no input; bitter on the proboscis or under the feet; fruit, geosmin, CO₂, heat, cold | stand still, don't feed, don't take off | 1.00 | 0.99 | 1.00 | 1.00 |
+| **Behaviours, activating command neurons** (6) | | **0.95** | 0.96 | 0.33 | 0.83 |
+| **Behaviours, from the senses** (16) | | **0.77** | 0.50 | 0.37 | **0.08** |
+
+\* The warm-zone test only asks the fly to leave, and the shuffled wiring's heat pattern also sets it
+walking, in some direction.
 
 What this says:
 
@@ -396,13 +409,28 @@ What this says:
   abolishes learning and nothing else tested (escape 5 of 5, feeding). Removing all inhibition makes
   the network seize (sugar on the proboscis sets 28,000 neurons firing within 0.1 s instead of 185)
   and the fly thrashes across the arena with no input at all.
-- **What the wiring doesn't do in this model**, and so the fly doesn't either: it doesn't steer by
-  odours, towards fruit or away from CO₂, and warmth doesn't reach its walking command neurons;
-  turning stripes make it turn the wrong way, because in the simulation the right-side motion-sensing neurons (HS
+- **Smell, temperature and learning steer the fly with the sense boost** (`server/boost.py`, a
+  hand-built part). Followed through up to six synapses, the connectome's paths point the right way:
+  fruit at the left antenna excites the left steering neurons far more than the right ones, CO₂ the
+  moonwalker neurons (back away), warmth on one side the other side's steering neurons (turn away),
+  cold holds walking back. But each path runs through 4-6 layers where a link carries a small share of
+  the next neuron's input, and the spiking model doesn't carry it to the command neurons. The boost
+  gives the command neurons input in proportion to those paths: direction and left/right pattern from
+  the wiring (its left and right sides averaged), overall strength per sense set by hand, and the small
+  difference between the two antennae enhanced. It is recomputed on the wiring that is running, so
+  silencing the antennal lobe's projection neurons stops it, and on the shuffled wiring fruit no longer
+  attracts and the fly walks into CO₂. It also reads what the mushroom body learned from its synapses
+  (the output neurons fire too little to carry it): an odour paired with punishment is steered away
+  from, one paired with reward towards (the output neurons of punishment compartments favour approach,
+  so weakening them means avoidance; Aso et al. 2014). With it, the fly turns and walks to fruit (more
+  reliably to the left than the right), backs away from CO₂, leaves warm air, and approaches fruit half
+  as much after three pairings with punishment.
+- **What the wiring doesn't do in this model**, and so the fly doesn't either, with or without the
+  boost: turning stripes make it turn the wrong way, because in the simulation the right-side motion-sensing neurons (HS
   cells) respond to both directions and the right DNa02 fires either way; sugar under the feet
   reaches the proboscis motor neuron only through links carrying 0.5-1.4% of each next neuron's input;
-  antennal dust reaches the grooming command neurons only through three weak steps. Learning changes
-  the synapses but not yet the behaviour (see Learning in the mushroom body).
+  antennal dust reaches the grooming command neurons only through three weak steps. Without the sense
+  boost, smells, warmth and learning change the brain's activity but not where the fly goes.
 
 ## Skills: teaching the fly new movements
 
@@ -709,6 +737,7 @@ POST http://localhost:8765/api/command
 {"cmd": "body",   "action": "feedback", "gain": 1}     # legs' sense organs -> nerve cord (0 = off)
 {"cmd": "body",   "action": "rhythm", "mode": "neurons"} # the walking model: neurons (on) | off
 {"cmd": "body",   "action": "assist", "name": "flight_timer", "on": false}  # a hand-built part on/off
+                                                     # (walking, flight_timer, sense_boost)
 {"cmd": "ablate", "group": "vision", "on": true}       # silence a neuron group or a cell type (false: restore)
 {"cmd": "body",   "action": "fruit"}                   # put something in the world near the fly: sugar,
                                                      # bitter, fruit, co2, geosmin, cva, heat, cold,
@@ -716,7 +745,7 @@ POST http://localhost:8765/api/command
                                                      # optional "x", "y" in mm
 {"cmd": "body",   "action": "probe_sugar"}             # touch a drop to the proboscis (also probe_bitter)
 {"cmd": "body",   "action": "target", "side": "left"}  # a small target darting ahead-left (or right)
-{"cmd": "body",   "action": "punish"}                  # activate PPL1 dopamine neurons for 1 s (reward: PAM)
+{"cmd": "body",   "action": "punish", "seconds": 1}    # activate PPL1 dopamine neurons (reward: PAM)
 {"cmd": "body",   "action": "forget"}                  # restore every learned synapse
 {"cmd": "body",   "action": "learning", "on": false}   # freeze the mushroom body's synapses
 {"cmd": "skill",  "action": "play", "name": "tap_front_left"}   # also stop, forget
@@ -768,6 +797,7 @@ server/locomotion.py   walking: leg oscillators and recorded steps, commanded by
 server/cpg.py          the legs' premotor rhythm neurons from the wiring, and descending drive to them
 server/feedback.py     the legs' sense organs -> sensory neurons
 server/plasticity.py   learning: dopamine-gated plasticity of the mushroom body's synapses
+server/boost.py        the sense boost: the senses' paths to the command neurons, strengthened (hand-built)
 server/calibration.py  keeps odours distinct in the antennal lobe and mushroom body
 server/neuroscience.py wiring queries: cell types, partners, strongest paths, activity-view groups
 server/body.py         stimuli -> sensory neurons; runs the body; what the body is doing

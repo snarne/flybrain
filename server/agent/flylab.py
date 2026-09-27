@@ -25,7 +25,7 @@ import time
 import urllib.parse
 import urllib.request
 
-FLYLAB_VERSION = "2"
+FLYLAB_VERSION = "3"
 URL = os.environ.get("FLYBRAIN_URL", "http://127.0.0.1:" + os.environ.get("PORT", "8765"))
 
 
@@ -148,9 +148,9 @@ def activate(cell_type, seconds=2.0, rate=150.0):
     return len(idx)
 
 
-def set_parts(walking=None, flight_timer=None):
+def set_parts(walking=None, flight_timer=None, sense_boost=None):
     """Switch the live body's hand-built parts on or off."""
-    for k, v in (("walking", walking), ("flight_timer", flight_timer)):
+    for k, v in (("walking", walking), ("flight_timer", flight_timer), ("sense_boost", sense_boost)):
         if v is not None:
             command({"cmd": "body", "action": "assist", "name": k, "on": bool(v)})
     return body()["physics"].get("assists")

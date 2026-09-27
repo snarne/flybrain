@@ -53,11 +53,11 @@ LEAD_S = 0.03           # start driving a little early (conduction + muscle dela
 LEVELS = ["descending", "premotor", "motor"]
 SHAPE_TRIES = 5         # shaping tries (muscles following the plan) before practising for the goal
 DEFAULT_TRIALS = 40     # practice tries for a goal
-PRACTICE_ASSISTS = {"walking": False, "flight_timer": False}
+PRACTICE_ASSISTS = {"walking": False, "flight_timer": False, "sense_boost": False}
 # where in the nervous system a skill's drive goes in: the brain's own routes first (descending neurons, then
 # nerve-cord premotor neurons, motor neurons last), only the nerve cord, or the motor neurons directly (the
 # closest to working the body like a puppet: it bypasses the wiring above the motor neurons)
-ASSIST_NAME = {"walking": "walking model", "flight_timer": "flight timer"}
+ASSIST_NAME = {"walking": "walking model", "flight_timer": "flight timer", "sense_boost": "sense boost"}
 DRIVE_AT = {"auto": None, "nerve_cord": ["premotor", "motor"], "motor": ["motor"]}
 LEVEL_TEXT = {"descending": "descending neuron (brain → nerve cord)", "premotor": "nerve-cord premotor interneuron",
               "motor": "motor neuron (direct)"}
@@ -767,10 +767,10 @@ class SkillEngine:
                 r = d["rates"] or [0]
                 d["rates"] = [r[i % len(r)] for i in range(n)]
             dur = duration
-            assists = {"walking": True, "flight_timer": True}
+            assists = {"walking": True, "flight_timer": True, "sense_boost": False}
         else:
             dur = float(sk.get("duration") or self.parse_plan(sk["plan"])[0])
-            assists = dict({"walking": True, "flight_timer": True}, **(sk.get("assists") or {}))
+            assists = dict({"walking": True, "flight_timer": True, "sense_boost": False}, **(sk.get("assists") or {}))
         res = await self._run([self._trial(drivers, dur, assists, sd, command=command) for sd in (9001, 9002)])
         runs = [self._measure(r, tracks, dur) for r in res if r.get("ok")]
         mean = {k: round(float(np.mean([m[k] for m in runs])), 3) for k in runs[0]}
@@ -797,7 +797,7 @@ class SkillEngine:
                 r = d["rates"] or [0]
                 d["rates"] = [r[i % len(r)] for i in range(n)]
             tracks = {}
-        base = {"walking": True, "flight_timer": True} if (command or not sk.get("assists")) else dict(PRACTICE_ASSISTS, **sk["assists"])
+        base = {"walking": True, "flight_timer": True, "sense_boost": False} if (command or not sk.get("assists")) else dict(PRACTICE_ASSISTS, **sk["assists"])
         asg = dict(base, **{k: bool(v) for k, v in (assists or {}).items() if k in PRACTICE_ASSISTS})
         g = practice.parse_goal(goal if goal is not None else sk.get("goal"),
                                 uses_jump=any(k.endswith(".jump") for k in tracks) or command,

@@ -333,6 +333,9 @@ class World:
         self.motor.update(spk, sim_ms / 1000.0)
         if getattr(self, "mb", None) is not None:
             self.mb.update(spk, sim_ms / 1000.0)
+        if getattr(self, "boost", None) is not None:
+            body = getattr(self, "body", None)
+            self.boost.update(body is not None and body.assist("sense_boost"))
         self.hist.append((t, sim_ms, reg, ro))
         while self.hist and self.hist[0][0] < t - WINDOW_MS:
             self.hist.popleft()
@@ -527,6 +530,9 @@ from plasticity import MushroomBody  # noqa: E402
 
 world.cpg = CPG(world)   # the legs' premotor neurons, following the walking model's steps (when it's on)
 world.mb = MushroomBody(world)   # dopamine-gated learning at the mushroom body's KC -> MBON synapses
+from boost import SenseBoost  # noqa: E402
+
+world.boost = SenseBoost(world)  # the senses' paths to the command neurons, strengthened (a hand-built part)
 body = Body(world)
 world.body = body  # so the agent's tools can run experiments on it
 body.set_rhythm(os.environ.get("FLYBRAIN_RHYTHM", "neurons"))
@@ -565,7 +571,7 @@ def _do_body_command(c):
         body.reset(home=bool(c.get("home", False)))
         world.pending.append({"cmd": "reset"})
     else:                                    # experiments and things put in the world (x, y optional, mm)
-        body.start(a, c.get("side"), **{k: float(c[k]) for k in ("x", "y") if k in c})
+        body.start(a, c.get("side"), **{k: float(c[k]) for k in ("x", "y", "seconds") if k in c})
 
 
 async def explain_events():

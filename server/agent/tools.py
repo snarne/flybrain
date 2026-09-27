@@ -181,9 +181,10 @@ TOOLS = [
         {"names": {"type": "array", "items": {"type": "string"}}, "repeat": {"type": "integer", "description": "1-20, default 1"}},
         ["names"]),
     _fn("body_parts", "See or switch the live body's hand-built parts: walking (the walking model that steps the legs "
-        "when the walking command neurons fire) and flight_timer (a jump starts flight and power is held at cruise). "
-        "With no arguments, says what each is and whether it's on.",
-        {"walking": {"type": "boolean"}, "flight_timer": {"type": "boolean"}}),
+        "when the walking command neurons fire), flight_timer (a jump starts flight and power is held at cruise) and "
+        "sense_boost (the senses' paths to the walking and steering command neurons strengthened, and steering by "
+        "learned odours). With no arguments, says what each is and whether it's on.",
+        {"walking": {"type": "boolean"}, "flight_timer": {"type": "boolean"}, "sense_boost": {"type": "boolean"}}),
     _fn("guide", "Read the guide to this system: how the brain, muscles, body and practice work, what is real "
         "connectome and what is hand-built, what each tool is for, and the Python helper (flylab) and HTTP API for "
         "scripts. Topics: overview, body, skills, neuroscience, scripts, limits. Read 'overview' when you start on a task "
@@ -673,12 +674,12 @@ class ToolRunner:
             return "The body isn't running.", False, {}
         return eng.reference(), True, {}
 
-    async def t_body_parts(self, walking=None, flight_timer=None):
+    async def t_body_parts(self, walking=None, flight_timer=None, sense_boost=None):
         body = getattr(self.world, "body", None)
         if body is None:
             return "The body isn't running.", False, {}
         from body import ASSISTS
-        for k, v in (("walking", walking), ("flight_timer", flight_timer)):
+        for k, v in (("walking", walking), ("flight_timer", flight_timer), ("sense_boost", sense_boost)):
             if v is not None:
                 body.set_assist(k, v)
         return "\n".join(f"- {k}: {'ON' if body.assists.get(k) else 'off'}. {t}" for k, t in ASSISTS.items()), True, {}

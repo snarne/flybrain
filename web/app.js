@@ -585,7 +585,8 @@ function onBody(b) {
   for (const a of b.active || []) bits.push(a === 'reward' || a === 'punish' ? `${a === 'reward' ? 'rewarding (PAM)' : 'punishing (PPL1)'}` : `activating ${a.toUpperCase()}`);
   const mem = Object.entries((b.memory || {}).odours || {})
     .map(([od, m]) => [od, m.aversive, m.appetitive]).filter(([, av, ap]) => Math.max(av, ap) > 0.05);
-  if (mem.length) bits.push('memory: ' + mem.map(([od, av, ap]) => av >= ap ? `${od} avoid ${Math.round(av * 100)}%` : `${od} seek ${Math.round(ap * 100)}%`).join(', '));
+  if (mem.length) bits.push('memory: ' + mem.map(([od, av, ap]) => ap - av < -0.1 ? `${od} avoid ${Math.round((av - ap) * 100)}`
+    : ap - av > 0.1 ? `${od} seek ${Math.round((ap - av) * 100)}` : `${od} neutral`).join(', '));
   const ph = b.physics || {};
   if (ph.on) {
     const feet = Object.values(ph.touch || {}).filter(Boolean).length;
@@ -632,7 +633,9 @@ function arm(btn) {
 document.querySelectorAll('[data-exp]').forEach(btn => btn.onclick = () => {
   if (btn.dataset.place && placing !== btn) { arm(btn); return; }
   arm(null);
-  send({ cmd: 'body', action: btn.dataset.exp, side: btn.dataset.side, home: !!btn.dataset.home });
+  const c = { cmd: 'body', action: btn.dataset.exp, side: btn.dataset.side, home: !!btn.dataset.home };
+  if (btn.dataset.exp === 'reward' || btn.dataset.exp === 'punish') c.seconds = +(document.getElementById('teach-s')?.value || 1);
+  send(c);
 });
 addEventListener('keydown', ev => { if (ev.key === 'Escape' && placing) arm(null); });
 let placeDown = null;
@@ -659,18 +662,30 @@ let memKey = '';
 function renderMemory(m) {
   if (!memEl || !m) return;
   const rows = Object.entries(m.odours || {});
-  const key = JSON.stringify([rows, (m.pairings || []).length]);
+  const boost = (bodyOpts.assists || {}).sense_boost !== false;
+  const key = JSON.stringify([rows, (m.pairings || []).length, boost]);
   if (key === memKey) return;
   memKey = key;
   if (!rows.length) {
     memEl.innerHTML = '<div class="empty">Nothing learned yet. Put an odour near the fly (Fruit smell, CO₂, Geosmin), then Reward or Punish while it smells it.</div>';
     return;
   }
-  const bar = (v, cls) => `<div class="bar"><i class="${cls}" style="width:${Math.min(100, Math.max(0, v * 100)).toFixed(0)}%"></i></div>`;
-  memEl.innerHTML = '<div class="empty">How much weaker each odour\'s Kenyon cells now drive the output neurons gated by punishment (avoid) and reward (seek):</div>'
-    + rows.map(([od, x]) => `<div class="od" title="${esc(od)}: input to punishment-gated MBONs −${Math.round(x.aversive * 100)}%, to reward-gated −${Math.round(x.appetitive * 100)}%"><span>${esc(od)}</span>${bar(x.aversive, 'av')}<span class="v">avoid ${Math.round(x.aversive * 100)}%</span></div>`
-      + `<div class="od"><span></span>${bar(x.appetitive, 'ap')}<span class="v">seek ${Math.round(x.appetitive * 100)}%</span></div>`).join('')
-    + ((m.pairings || []).length ? `<div class="log">${m.pairings.slice(-4).map(p => `${p.t} s: ${esc(p.reinforcement)} with ${esc(p.odours.join(', ') || 'no odour')}`).join('<br>')}</div>` : '');
+  // one scale per odour: avoid (left, red) to seek (right, green), from how much weaker the odour's Kenyon
+  // cells now drive the punishment-gated and the reward-gated output neurons
+  const scale = x => {
+    const v = Math.max(-1, Math.min(1, (x.appetitive || 0) - (x.aversive || 0)));
+    const w = Math.abs(v) * 50;
+    return `<div class="scale"><i class="${v < 0 ? 'av' : 'ap'}" style="${v < 0 ? `right:50%;width:${w}%` : `left:50%;width:${w}%`}"></i><b></b></div>`;
+  };
+  const word = x => {
+    const v = (x.appetitive || 0) - (x.aversive || 0);
+    return Math.abs(v) < 0.1 ? 'neutral' : v < 0 ? `avoid ${Math.round(-v * 100)}` : `seek ${Math.round(v * 100)}`;
+  };
+  memEl.innerHTML = '<div class="empty">What each odour now means to the fly, from its mushroom body synapses (avoid ← → seek):</div>'
+    + rows.map(([od, x]) => `<div class="od" title="${esc(od)}: its Kenyon cells' input to punishment-gated output neurons −${Math.round(x.aversive * 100)}%, to reward-gated −${Math.round(x.appetitive * 100)}%"><span>${esc(od)}</span>${scale(x)}<span class="v">${word(x)}</span></div>`).join('')
+    + `<div class="empty">${boost ? 'With the sense boost on, the fly steers by it: away from an odour it avoids, towards one it seeks.'
+        : 'The sense boost is off, so this changes the synapses but not yet where the fly goes.'}</div>`
+    + ((m.pairings || []).length ? `<div class="log">${m.pairings.slice(-4).map(p => `${p.t} s: ${esc(p.reinforcement)}${p.seconds ? ` (${p.seconds} s)` : ''} with ${esc(p.odours.join(', ') || 'no odour')}`).join('<br>')}</div>` : '');
 }
 function setBodyOpts(ph) {
   bodyOpts = ph;
@@ -685,6 +700,8 @@ function setBodyOpts(ph) {
   forBtns('feedback', el => { el.classList.toggle('on', !!ph.on && ph.feedback > 0); el.disabled = !ph.on; });
   forBtns('rhythm', el => { el.textContent = `Walking model ${walking ? 'on' : 'off'}`; el.classList.toggle('on', walking); });
   forBtns('flight_timer', el => { el.textContent = `Flight timer ${timer ? 'on' : 'off'}`; el.classList.toggle('on', timer); });
+  const boost = (ph.assists || {}).sense_boost !== false;
+  forBtns('sense_boost', el => { el.textContent = `Sense boost ${boost ? 'on' : 'off'}`; el.classList.toggle('on', boost); });
 }
 forBtns('physics', el => el.onclick = () => send({ cmd: 'body', action: 'physics', on: !bodyOpts.on }));
 forBtns('feedback', el => el.onclick = () => send({ cmd: 'body', action: 'feedback', gain: bodyOpts.feedback > 0 ? 0 : 1 }));
@@ -692,6 +709,8 @@ forBtns('rhythm', el => el.onclick = () =>
   send({ cmd: 'body', action: 'rhythm', mode: (bodyOpts.rhythm || 'neurons') === 'off' ? 'neurons' : 'off' }));
 forBtns('flight_timer', el => el.onclick = () =>
   send({ cmd: 'body', action: 'assist', name: 'flight_timer', on: (bodyOpts.assists || {}).flight_timer === false }));
+forBtns('sense_boost', el => el.onclick = () =>
+  send({ cmd: 'body', action: 'assist', name: 'sense_boost', on: (bodyOpts.assists || {}).sense_boost === false }));
 let demoTimers = [];
 const demoBtn = document.getElementById('demo');
 function stopDemo() {
@@ -882,3 +901,9 @@ document.getElementById('restart-code').onclick = ev => {
   ev.target.textContent = 'Restarting…';
   fetch('api/restart', { method: 'POST' }).catch(() => {});
 };
+
+// Teach it: how long each Reward or Punish lasts
+{
+  const ts = document.getElementById('teach-s'), to = document.getElementById('teach-s-out');
+  if (ts && to) ts.oninput = () => { to.textContent = `${ts.value} s`; };
+}

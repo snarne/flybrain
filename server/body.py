@@ -57,6 +57,11 @@ ASSISTS = {
     "flight_timer": "Flight timer: a jump starts flight at once, and flight power is held at cruise for 1.5 s, then "
                     "eased off so the fly lands. Off: flight power is only what the wing power motor neurons give "
                     "(the flight motor still only runs with the feet off the ground).",
+    "sense_boost": "Sense boost: the connectome's paths from smell, temperature and humidity to the walking and "
+                   "steering command neurons point the right way (towards fruit, away from heat, back from CO2) but are "
+                   "too weak to make them fire; the boost gives the command neurons input in proportion to those paths "
+                   "(boost.py), and steers towards or away from odours the mushroom body has learned about. Off: only "
+                   "what the spiking network carries by itself.",
 }
 FLIGHT_CRUISE = 0.85     # flight power kept up once airborne (a hover needs ~0.8)
 FLIGHT_SINK = 0.55       # ... easing off to this, so the fly sinks and lands
@@ -213,11 +218,13 @@ class Body:
         elif action in ACTIVATE:
             self.active[action] = 2.5 if action != "gf" else 0.3
         elif action in REINFORCE:
-            self.active[action] = 1.0
+            secs = float(min(max(kw.get("seconds", 1.0), 0.1), 5.0))
+            self.active[action] = secs
             mb = getattr(self.w, "mb", None)
             if mb is not None:
                 odours = sorted({o["odour"] for o in self.arena.objects if o["kind"] == "odour"})
-                mb.log.append({"t": round(self.w.brain.t_ms / 1000, 1), "reinforcement": action, "odours": odours})
+                mb.log.append({"t": round(self.w.brain.t_ms / 1000, 1), "reinforcement": action, "odours": odours,
+                               "seconds": round(secs, 2)})
         elif action == "stop":
             self.dust_t, self.active, self.probe = 0.0, {}, None
             self.arena.objects = [o for o in self.arena.objects if o["kind"] not in ("threat", "target")]
@@ -304,6 +311,9 @@ class Body:
             # reach the legs' networks: counting them set the fly walking while it tasted sugar)
             r_all = self.w.all_readouts() if hasattr(self.w, "all_readouts") else r
             W.command(r_all, dt, yaw_rate=-self.ball[1])
+            boost = getattr(self.w, "boost", None)
+            if boost is not None and self.assist("sense_boost") and boost.parts and W.why:
+                W.why += f" (sense boost: {boost.why()})"
         else:
             W.command({}, dt)
         if cpg_follow := getattr(self.w, "cpg", None):

@@ -31,6 +31,8 @@ PLUME = 6.0                      # odour plume width (mm)
 DROP_R = 0.6                     # food drop radius (mm)
 THREAT_R, THREAT_V, THREAT_D = 3.0, 40.0, 30.0   # radius, speed (mm/s), starting distance (mm)
 QUANT = 5.0
+QUANT_FINE = 1.0                 # Hz, for odours and air: the sense boost compares the two antennae, which differ by a
+                                 # few Hz near a source
 ARENA = 40.0                     # half-width of the arena floor (mm), as physics.py
 TARGET_D, TARGET_R, TARGET_A, TARGET_F, TARGET_LIFE = 5.0, 0.5, 1.2, 1.0, 8.0   # distance, radius, sway (mm), Hz, s
 
@@ -142,8 +144,8 @@ class Arena:
         rates = {}
         felt = {}
 
-        def fire(neurons, hz):
-            hz = round(min(200.0, hz) / QUANT) * QUANT
+        def fire(neurons, hz, q=QUANT):
+            hz = round(min(200.0, hz) / q) * q
             if hz > 0:
                 for n in neurons:
                     rates[n] = max(rates.get(n, 0.0), hz)
@@ -157,7 +159,7 @@ class Arena:
                 d2 = (a[0] - o["x"]) ** 2 + (a[1] - o["y"]) ** 2
                 c = o["strength"] * math.exp(-d2 / (2 * o["spread"] ** 2))
                 hz = 150.0 * c / (c + 0.2)
-                fire(groups.get(side, []), hz)
+                fire(groups.get(side, []), hz, QUANT_FINE)
                 if hz >= 5:
                     felt[f"{o['odour']} {side[0].upper()}"] = round(hz)
         # temperature and humidity at each antenna (the arista)
@@ -173,10 +175,10 @@ class Arena:
             self.last_RH[side] = RH
             hot = 100.0 * sat((T - AIR_T) / 8.0) + 150.0 * sat(dT / 4.0)
             cold = 100.0 * sat((AIR_T - T) / 8.0) + 150.0 * sat(-dT / 4.0)
-            fire(S.get("heat", {}).get(side, []), hot)
-            fire(S.get("cold", {}).get(side, []), cold)
-            fire(S.get("humid", {}).get(side, []), 150.0 * sat((RH - AIR_RH) / 35.0))
-            fire(S.get("dry", {}).get(side, []), 150.0 * sat((AIR_RH - RH) / 35.0))
+            fire(S.get("heat", {}).get(side, []), hot, QUANT_FINE)
+            fire(S.get("cold", {}).get(side, []), cold, QUANT_FINE)
+            fire(S.get("humid", {}).get(side, []), 150.0 * sat((RH - AIR_RH) / 35.0), QUANT_FINE)
+            fire(S.get("dry", {}).get(side, []), 150.0 * sat((AIR_RH - RH) / 35.0), QUANT_FINE)
             if abs(T - AIR_T) > 0.5:
                 felt[f"{T:.0f} C {side[0].upper()}"] = round(max(hot, cold))
             if abs(RH - AIR_RH) > 3:

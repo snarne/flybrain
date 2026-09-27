@@ -364,7 +364,7 @@ body.mode-agent [data-for="lab"], body.mode-lab [data-for="agent"] { display: no
 .lab-sec .exp-group button { padding: 4px 9px; }
 .memory { margin-top: 10px; display: grid; gap: 6px; font-size: 12px; }
 .memory .empty { color: var(--faint); font-size: 11px; line-height: 1.4; }
-.memory .od { display: grid; grid-template-columns: 58px 1fr 38px; align-items: center; gap: 6px; }
+.memory .od { display: grid; grid-template-columns: 58px 1fr 62px; align-items: center; gap: 6px; }
 .memory .od .bar { height: 6px; background: #1a1f2a; border-radius: 3px; overflow: hidden; position: relative; }
 .memory .od .bar i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 3px; }
 .memory .od .bar i.av { background: #ff7a6b; }
@@ -392,3 +392,8 @@ body.mode-agent [data-for="lab"], body.mode-lab [data-for="agent"] { display: no
 .hello .suggest button { font: inherit; font-size: 13px; text-align: left; color: var(--text); background: rgba(255, 255, 255, 0.04);
   border: 1px solid #333b48; border-radius: 10px; padding: 5px 10px; cursor: pointer; }
 .hello .suggest button:hover { border-color: #ffcf5c; }
+.memory .scale { position: relative; height: 8px; background: #1a1f2a; border-radius: 4px; overflow: hidden; }
+.memory .scale i { position: absolute; top: 0; bottom: 0; }
+.memory .scale i.av { background: #ff7a6b; border-radius: 4px 0 0 4px; }
+.memory .scale i.ap { background: #6fd39a; border-radius: 0 4px 4px 0; }
+.memory .scale b { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: #8a93a3; }

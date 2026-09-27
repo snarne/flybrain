@@ -16,8 +16,11 @@ The chain, every 33 ms frame:
 Real vs hand-built (be honest about this when you report results):
 - Real connectome: which neurons respond to what, the pathways, the descending commands, the motor neurons.
 - Hand-built parts, switchable (body_parts tool; practice runs with them off): the walking model (steps the legs
-  with a recorded fly's steps when the walking command neurons fire) and the flight timer (a jump starts flight and
-  power is held at cruise).
+  with a recorded fly's steps when the walking command neurons fire), the flight timer (a jump starts flight and
+  power is held at cruise), and the sense boost (the connectome's paths from smell, temperature and humidity to the
+  walking and steering command neurons point the right way but are too weak to make them fire; the boost gives the
+  command neurons input in proportion to those paths, and steers towards or away from odours the mushroom body has
+  learned about).
 - Body-model simplifications, not switchable: the jump muscle's launch is a push on the body; wing lift is
   proportional to wing power; the halteres keep the body level in the air; a fly on its back is set upright after a
   second.
@@ -133,8 +136,10 @@ dna02_l, dna02_r, gf, adn, reset, assist).
 - The model: leaky integrate-and-fire neurons with synapse counts as weights (Shiu et al. 2024), no gap junctions,
   no neuromodulation beyond the mushroom body's dopamine learning, no ion-channel dynamics. Calibrations: an
   olfactory-pathway balance (so odours stay distinct) and adaptation on self-exciting loops (so it doesn't seize).
-- Measured weak links: fruit and CO2 barely reach the walking command neurons; the optomotor response goes the
-  wrong way; sugar reaches the proboscis motor neuron through weak links; learning changes MBON firing, but MBONs
-  barely reach the command neurons. So several natural behaviours are weak in the model; don't claim otherwise.
+- Measured weak links: in the spiking network alone, fruit and CO2 barely reach the walking command neurons, and
+  learning changes MBON firing but MBONs barely reach the command neurons; the sense boost (a hand-built part)
+  strengthens those paths, so odour steering and learned avoidance work with it on and not with it off. Say which
+  when you report. The optomotor response goes the wrong way; sugar reaches the proboscis motor neuron through weak
+  links. Don't claim more than was measured.
 - Skills can only use what the driven neurons do; practice tunes how they are driven, not the wiring.
 - Numbers from a trial are one noisy run; test_skill averages several.
