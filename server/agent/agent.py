@@ -1,6 +1,5 @@
 """
-The agent: System 1 (Laya) snap judgement -> System 2 (open LLM) reasoning, talking and coding,
-with a fly brain as its body.
+The agent: an open LLM for reasoning, talking and coding, with a fly brain as its body.
 
 KV caching, three layers:
   1. Prefix reuse within a session. The system prompt and tool list never change and new turns
@@ -25,6 +24,16 @@ from .tools import NEEDS_APPROVAL, SHELL, TOOLS, WORKSPACE, ToolRunner
 ROOT = Path(__file__).resolve().parents[2]
 CONV_DIR = ROOT / "data" / "conversations"
 MAX_STEPS = 16
+
+
+def plan_turn(text):
+    """Whether the model thinks before replying, and which sampling it uses. It thinks unless the message
+    is small talk; code sampling for requests to write or fix code (it then thinks once and acts)."""
+    t = text.lower().strip()
+    small = len(t.split()) <= 4 and not re.search(r"\b(why|how|what|learn|make|do|walk|jump|test|run|write)\b", t)
+    code = "```" in text or bool(re.search(r"\b(code|script|python|javascript|function|bug|debug|refactor|"
+                                           r"unit test|compile)\b", t))
+    return (not small), ("code" if code else "chat")
 
 # For models or servers without native tool calling: the tools are described in the prompt and the
 # model writes each call as a fenced block, which is parsed here. Chosen automatically when a server
@@ -60,7 +69,7 @@ def as_prompt_tools(messages):
 
 SYSTEM_PROMPT = f"""You are Fly, an AI assistant whose body is a simulated fruit fly: its whole central nervous system (166,029 neurons of the BANC brain-and-nerve-cord connectome, including the motor neurons that move its legs, wings, head and proboscis), running live next to you and shown to the user in 3D with the fly body it moves.
 
-How you work: a fast "System 1" model (Laya) makes a snap judgement about each message, then you (the "System 2" language model) do the talking, reasoning, system design and coding. Your conversation drives chosen neurons in the fly (hearing activates its auditory neurons, your deliberation drives its central complex, recalled memories drive Kenyon cells, successes taste sweet and failures bitter). Be honest about this if asked: the fly brain does not do your reasoning; it is your body, and its responses come from its real wiring.
+How you work: you (the language model) do the talking, reasoning, system design and coding. Your conversation drives chosen neurons in the fly (hearing activates its auditory neurons, your deliberation drives its central complex, recalled memories drive Kenyon cells, successes taste sweet and failures bitter). Be honest about this if asked: the fly brain does not do your reasoning; it is your body, and its responses come from its real wiring.
 
 You can:
 - Talk naturally, explain, and reason carefully when it matters.
@@ -119,8 +128,8 @@ class Conversation:
 
 
 class Agent:
-    def __init__(self, world, runtime, llm, system1, bridge, emit):
-        self.world, self.rt, self.llm, self.s1, self.bridge = world, runtime, llm, system1, bridge
+    def __init__(self, world, runtime, llm, bridge, emit):
+        self.world, self.rt, self.llm, self.bridge = world, runtime, llm, bridge
         self.emit = emit
         self.tools = ToolRunner(world, bridge)
         self.task = None
@@ -232,14 +241,7 @@ class Agent:
                 return
             await self.restore_kv()
 
-            # System 1: snap judgement (runs in a thread; Laya is a PyTorch model)
-            last = next((m.get("content", "") for m in reversed(c.messages) if m["role"] == "assistant" and m.get("content")), "")
-            d = await asyncio.get_running_loop().run_in_executor(None, self.s1.decide, text, last)
-            thinking = d["depth"] >= 0.9 or d["intent"] == "design"
-            mode = "code" if d["intent"] == "code" else "chat"
-            d["thinking"] = thinking
-            self._ui({"kind": "system1", **d})
-            self.bridge.tone(d)
+            thinking, mode = plan_turn(text)
 
             c.messages.append({"role": "user", "content": f"{text}\n\n{self.bridge.body_state()}"})
             for step in range(MAX_STEPS):

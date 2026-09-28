@@ -59,7 +59,7 @@ def recommend(hw):
     vram = max([g["total_mb"] for g in gpus], default=0) / 1024
     if hw.get("os") == "darwin":
         # Apple silicon: the GPU may use about two thirds of unified memory; leave room for the
-        # brain simulation, Laya and the browser.
+        # brain simulation, its practice copies and the browser.
         if ram >= 44:
             return "qwen3.6-35b-a3b", f"{ram:.0f} GB of unified memory fits the 4-bit 35B-A3B"
         if ram >= 28:

@@ -33,8 +33,7 @@ that can teach it new movements.
   shuffled (each neuron keeping its number of connections), without inhibition, or with groups of
   neurons silenced, to show what the real wiring contributes.
 - **Fly, the agent**: an open language model running on your own computer (talking, reasoning,
-  designing systems, writing and running code), with Laya as a fast "System 1" in front of it. The
-  fly is its body. Ask it to do a movement the fly has never done, like tapping a key or jumping as
+  designing systems, writing and running code). The fly is its body. Ask it to do a movement the fly has never done, like tapping a key or jumping as
   high as it can, and it plans the movement and says what it should achieve; the engine searches the
   wiring for the neurons that produce it, and the fly practises many variations in background copies
   of itself, scored on what each try achieved. The result is saved as a **skill**: the next time,
@@ -73,7 +72,7 @@ cd flybrain
 The first start takes a few minutes. Inside the folder, it:
 
 1. installs [uv](https://docs.astral.sh/uv/) (a small Python manager), Python 3.12 and the Python
-   packages (about 1 GB, mostly PyTorch for Laya);
+   packages (a few hundred MB: the simulator's numerical libraries and MuJoCo);
 2. downloads the BANC connections (about 300 MB, from the BANC project's public Google Cloud bucket)
    and packs them for the simulator (under a minute);
 3. downloads the llama.cpp engine for your machine (about 50 MB).
@@ -516,8 +515,8 @@ The same folder runs on a Mac and on a Windows PC (and Linux). At start-up the a
 is running on and keeps everything machine-specific apart, per *profile* (`macos-arm64`,
 `windows-x64`, `linux-x64`, ...): the Python environment (`.venv-<profile>`), the llama.cpp build
 (`runtime/<profile>/`), the model chosen for that machine, and its saved KV caches. Model files are
-portable and shared (`models/`). Everything the app installs, including uv, Python, packages and
-the Laya checkpoint, stays inside the folder (`.tools/`, `.cache/`); nothing is installed system-wide.
+portable and shared (`models/`). Everything the app installs, including uv, Python and packages,
+stays inside the folder (`.tools/`, `.cache/`); nothing is installed system-wide.
 
 The LLM runs in [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`, and the app
 fetches the right build:
@@ -601,19 +600,10 @@ Notes: KV-cache saving and restoring (below) needs llama.cpp's own server, so wi
 server each conversation is re-read after a restart. "Thinking" is shown for models that stream it
 (`reasoning_content` or `reasoning`).
 
-### System 1 and System 2
+### The language model and its tools
 
-Every message first goes to **Laya** ([Convai](https://github.com/NandhaKishorM/laya), Apache 2.0),
-a 421M-parameter decision model that answers typed questions in one forward pass with calibrated
-probabilities and no text generation. It decides the intent (chat, question, code, design, brain),
-how much reasoning the reply needs, whether tools are needed, and the tone. The chat shows each
-decision. Depth switches the LLM's thinking on or off, which saves time on quick replies. Laya runs on
-the GPU where PyTorch supports it (Apple silicon, NVIDIA) and otherwise on the CPU; either way it takes tens of milliseconds. Its
-checkpoint downloads from Hugging Face the first time the agent starts. It is used zero-shot here;
-its authors report big accuracy gains from fine-tuning on your own decisions, which is a natural
-next step. If Laya can't load, simple keyword rules stand in and the chat labels them "rules".
-
-The **LLM** (Qwen) then answers, streaming its thinking (collapsible) and its reply. It has tools:
+The **LLM** (Qwen) answers each message, streaming its thinking (collapsible) and its reply. It thinks
+before replying unless the message is small talk, and code requests get Qwen's coding settings. It has tools:
 read/write/edit files and run commands in the `workspace/` folder (commands ask for your approval
 unless you tick Auto-approve), long-term notes (remember/recall), its body
 (body_experiment, stimulate_senses, brain_status, list_skills, motor_reference, learn_skill,
@@ -665,7 +655,6 @@ design decision, listed live in the "Body link" panel:
 | Agent | Fly neurons |
 |---|---|
 | Reading your message | Johnston's organ auditory neurons (the fly's ear): the half that doesn't feed the giant fibre |
-| Laya hears praise / frustration | sugar / bitter taste neurons |
 | LLM deliberating (thinking tokens) | PFN neurons into the central complex, the action-selection hub |
 | Recalling a memory or a conversation | a sparse, memory-specific 5% of Kenyon cells (mushroom body) |
 | Code runs / fails | sugar (reward) / bitter (aversive) |
@@ -774,7 +763,7 @@ POST /api/restart       start the app again (run.sh / run.bat), e.g. after an up
 
 {"cmd": "chat", "text": "..."} | {"cmd": "stop"} | {"cmd": "new_chat"} | {"cmd": "model_setup", "model": "qwen3.5-9b"}
 {"cmd": "model_custom", "kind": "hf" | "path" | "server", "value": "...", "model": "...", "api_key": "..."}
-GET /api/agent/status   model, hardware, Laya, conversation
+GET /api/agent/status   model, hardware, conversation
 ```
 
 The browser gets a WebSocket stream (`/ws`) of every spike (binary), status JSON 5× a second, the
@@ -804,7 +793,7 @@ server/body.py         stimuli -> sensory neurons; runs the body; what the body 
 server/skills.py       learning new movements: wiring search, shaping, practice for a goal, skill library
 server/practice.py     practice: goal metrics, the search (CMA-ES), background copies of the fly
 server/practice_worker.py  one background copy of the whole fly, run as fast as it goes
-server/agent/          the AI: runtime.py (llama.cpp setup), models.py, llm.py, system1.py (Laya),
+server/agent/          the AI: runtime.py (llama.cpp setup), models.py, llm.py,
                        agent.py (loop, conversations, KV cache), tools.py, bridge.py (body link),
                        guide.md (the agent's guide to the system), flylab.py (Python helper for its scripts)
 server/data/           neuron labels and signs, senses, readouts, motor pools, leg sense organs,
@@ -855,6 +844,5 @@ code), llm_config.json (your overrides), server/data/connectome_*.npz (built fro
   plasticity of Kenyon cell → MBON synapses); Lin et al. 2014 (APL and Kenyon cell sparseness);
   Yaksi and Wilson 2010, Huang et al. 2010 (excitatory local neurons in the antennal lobe).
 - LLM runtime: llama.cpp (MIT). Models: Qwen3.5 / Qwen3.6 (Apache 2.0), GGUF builds by Unsloth.
-- System 1: Laya by Convai Innovations (Apache 2.0).
 
 Check the BANC and FlyWire data terms before any commercial use.

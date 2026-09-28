@@ -9,7 +9,7 @@ WebSocket /ws
   browser -> server  JSON commands, same shape as POST /api/command (see apply_command),
                      plus agent commands (chat, stop, approve, ...; see handle_agent_command)
 
-The agent (open LLM + Laya + tools) lives in server/agent/. Its events go out on the same socket.
+The agent (open LLM + tools) lives in server/agent/. Its events go out on the same socket.
 The body: motor.py (motor neurons -> muscles -> joints), body.py (stimuli, what the fly is doing),
 skills.py (learning new movements by finding which neurons to drive).
 """
@@ -37,9 +37,8 @@ import sim
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(__file__).parent / "data"
-# Keep downloads (e.g. Laya's checkpoint) inside the project folder even when not started via run.sh
+# Keep any downloads (Hugging Face models) inside the project folder even when not started via run.sh
 os.environ.setdefault("HF_HOME", str(ROOT / ".cache" / "huggingface"))
-os.environ.setdefault("TORCH_HOME", str(ROOT / ".cache" / "torch"))
 
 # a record of what went wrong, if anything does: Python errors, and hard crashes (faulthandler also
 # catches those in MuJoCo or numba, which would otherwise take the server down without a word)
@@ -521,7 +520,7 @@ def emit(msg):
 
 
 main_loop = None
-agent = runtime = system1 = bridge = None
+agent = runtime = bridge = None
 from body import Body  # noqa: E402
 from skills import SkillEngine  # noqa: E402
 
@@ -598,20 +597,18 @@ async def explain_events():
 
 
 def setup_agent():
-    global agent, runtime, system1, bridge
+    global agent, runtime, bridge
     from agent.agent import Agent
     from agent.bridge import Bridge
     from agent.llm import LLM
     from agent.runtime import Runtime
-    from agent.system1 import System1
 
     runtime = Runtime()
-    system1 = System1()
     bridge = Bridge(world, emit)
     bridge.loop = main_loop
     import threading
     threading.Thread(target=bridge.hear_neurons, daemon=True).start()   # ready before the first message
-    agent = Agent(world, runtime, LLM(runtime), system1, bridge, emit)
+    agent = Agent(world, runtime, LLM(runtime), bridge, emit)
     # start the model automatically only if it's already downloaded (never start a big download unasked)
     key = runtime.cfg.get("model") or runtime.recommended
     if (runtime.cfg.get("external_url") or runtime.cfg.get("model_path") or runtime.cfg.get("hf_model")
@@ -641,7 +638,7 @@ def install_flylab():
 
 
 def agent_status():
-    st = {"type": "agent_status", "runtime": runtime.status(), "system1": system1.status(),
+    st = {"type": "agent_status", "runtime": runtime.status(),
           "busy": agent.busy, "auto_approve": agent.auto_approve, "bridge": bridge.enabled,
           "conversation": {"id": agent.conv.id, "title": agent.conv.title, "kv_tokens": agent.conv.kv_tokens}}
     return st
@@ -703,7 +700,7 @@ async def pump_outbox():
 
 
 async def watch_runtime():
-    """Push model/Laya status when it changes; restore the KV cache once the model is up."""
+    """Push the model's status when it changes; restore the KV cache once the model is up."""
     last = None
     while True:
         st = agent_status()
@@ -711,8 +708,6 @@ async def watch_runtime():
         if key != last:
             last = key
             emit(st)
-            if st["runtime"]["state"] in ("ready", "external"):
-                system1.start()
             if st["runtime"]["state"] == "ready" and not agent.busy:
                 await agent.restore_kv()
         await asyncio.sleep(0.5)

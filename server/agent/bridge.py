@@ -7,8 +7,7 @@ connectome does with the input is the simulation.
 
   hearing your message      -> Johnston's organ auditory neurons (the fly's ear): the half that doesn't feed
                                the giant fibre (see hear_neurons)
-  System 1 tone judgement   -> praise: sugar taste neurons; frustration: bitter; urgency: looming detectors
-  System 2 deliberation     -> PFN neurons into the central complex (action selection), while thinking tokens stream
+  LLM deliberation          -> PFN neurons into the central complex (action selection), while thinking tokens stream
   memory recall / KV restore-> a sparse, memory-specific set of Kenyon cells (the mushroom body's code)
   tool success / failure    -> sugar (reward) / bitter (aversive) taste neurons
 
@@ -106,20 +105,10 @@ class Bridge:
         self.pulse("hear", self.hear_neurons(), c["rate"], secs, "Hearing your message",
                    c["about"] + " (the half that doesn't drive the escape neuron: a quiet sound)")
 
-    def tone(self, d):
-        if d["tone"] == "positive":
-            s = self.stim["sugar"]
-            self.pulse("tone", s["neurons"], s["rate"], 0.8, "System 1: you sound pleased",
-                       "Laya judged the tone positive, so the fly tastes sugar")
-        elif d["tone"] == "frustrated":
-            s = self.stim["bitter"]
-            self.pulse("tone", s["neurons"], s["rate"], 0.8, "System 1: you sound frustrated",
-                       "Laya judged the tone frustrated, so the fly tastes something bitter")
-
     def thinking(self, on, tokens_per_s=None):
         c = self.ch["think"]
         rate = c["rate"] if tokens_per_s is None else min(60, 10 + tokens_per_s)
-        self.hold("think", c["neurons"], rate, on, "Deliberating (System 2 reasoning)", c["about"])
+        self.hold("think", c["neurons"], rate, on, "Deliberating (the language model is thinking)", c["about"])
 
     def memory(self, key_text, what="Remembering"):
         c = self.ch["memory"]

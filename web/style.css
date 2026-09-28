@@ -135,9 +135,8 @@ body.chat-open #inspector { width: 440px; }
 #tab-chat[hidden], .tab[hidden] { display: none; }
 
 #model-card { padding: 10px 14px; border-bottom: 1px solid var(--line); flex: none; font-size: 12px; }
-#model-card .ready, .s1line { display: flex; align-items: center; gap: 8px; }
+#model-card .ready { display: flex; align-items: center; gap: 8px; }
 #model-card .grow { flex: 1; min-width: 0; }
-.s1line { color: var(--muted); margin-top: 6px; }
 .setup { display: flex; flex-direction: column; gap: 6px; }
 .setup-title { font-weight: 600; font-size: 13px; }
 .setup select { width: 100%; }
@@ -173,10 +172,7 @@ body.chat-open #inspector { width: 440px; }
 .think summary { cursor: pointer; color: #8fc3ff; font-size: 12px; }
 .think-body { white-space: pre-wrap; font-size: 12px; max-height: 220px; overflow-y: auto; margin-top: 4px; }
 .stats { color: var(--faint); font-size: 11px; margin-top: 2px; }
-.s1 { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: 11px; color: var(--muted); }
-.s1-tag { border-radius: 99px; padding: 1px 7px; font-weight: 600; background: #2b2442; color: #c7b8ff; }
-.s1-tag.rules { background: #2a2a2a; color: #bbb; }
-.s1 .ms, .tool .ms { color: var(--faint); }
+.tool .ms { color: var(--faint); }
 .tool { border: 1px solid var(--line); border-radius: 8px; padding: 5px 8px; font-size: 12px; }
 .tool summary { cursor: pointer; display: flex; align-items: center; gap: 6px; list-style: none; }
 .tool summary code { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }

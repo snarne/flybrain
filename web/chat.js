@@ -1,4 +1,4 @@
-// Chat with the agent (open LLM + Laya System 1), model setup, and the body-link feed.
+// Chat with the agent (open LLM), model setup, and the body-link feed.
 const $ = id => document.getElementById(id);
 const send = cmd => window.flybrain?.send(cmd);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -113,24 +113,14 @@ function emptyState() {
   });
 }
 
-const INTENT = { chat: 'Chat', question: 'Question', code: 'Code', design: 'Design', brain: 'Brain' };
 function renderItem(it) {
   switch (it.kind) {
     case 'user':
       log.querySelector('.hello')?.remove();
       add(esc(it.text).replace(/\n/g, '<br>'), 'msg user');
       break;
-    case 'system1': {
-      const conf = it.intent_conf != null ? ` ${Math.round(it.intent_conf * 100)}%` : '';
-      const depth = ['instant', 'some thought', 'deep'][Math.min(2, Math.round(it.depth))];
-      const probs = Object.entries(it.intent_probs || {}).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(', ');
-      add(`<span class="s1-tag ${it.source}">${it.source === 'laya' ? 'System 1 · Laya' : 'System 1 · rules'}</span>
-           <span>${INTENT[it.intent] || it.intent}${conf}</span>
-           <span>${depth} → thinking ${it.thinking ? 'on' : 'off'}</span>
-           <span>tone: ${esc(it.tone)}</span>
-           <span class="ms">${it.ms} ms</span>`, 's1').title = probs ? `Intent probabilities: ${probs}` : 'Keyword rules (Laya not loaded)';
+    case 'system1':            // older conversations: a message router that has since been removed
       break;
-    }
     case 'assistant': {
       let s = streams.get(it.id);
       if (!s) s = newStream(it.id, false);
@@ -282,16 +272,13 @@ function hwLine(r) {
 }
 function renderCard(s) {
   const r = s.runtime;
-  const s1 = s.system1;
-  const s1dot = { ready: 'ok', loading: 'wait', waiting: '' }[s1.state] ?? 'warn';
-  const s1line = `<div class="s1line"><span class="dot ${s1dot}"></span>System 1: ${esc(s1.detail)}</div>`;
   if (r.state === 'ready' && !chooserOpen) {
-    card.innerHTML = `<div class="ready"><span class="dot ok"></span><span class="grow">${esc(r.detail)}</span><button class="link" id="change-model">Change</button></div>${s1line}`;
+    card.innerHTML = `<div class="ready"><span class="dot ok"></span><span class="grow">${esc(r.detail)}</span><button class="link" id="change-model">Change</button></div>`;
     $('change-model').onclick = () => { chooserOpen = true; renderCard(s); };
     return;
   }
   if (r.state === 'external' && !chooserOpen) {
-    card.innerHTML = `<div class="ready"><span class="dot ok"></span><span class="grow">${esc(r.model_label)}</span><button class="link" id="change-model">Change</button></div>${s1line}`;
+    card.innerHTML = `<div class="ready"><span class="dot ok"></span><span class="grow">${esc(r.model_label)}</span><button class="link" id="change-model">Change</button></div>`;
     $('change-model').onclick = () => { chooserOpen = true; renderCard(s); };
     return;
   }
@@ -300,7 +287,7 @@ function renderCard(s) {
     const pct = p && p.total ? (100 * p.done / p.total) : null;
     card.innerHTML = `<div class="setup"><div class="grow">${esc(r.detail)}</div>
       ${pct != null ? `<div class="bar big"><i style="width:${pct.toFixed(1)}%"></i></div><div class="hint">${fmtBytes(p.done)} of ${fmtBytes(p.total)} · ${pct.toFixed(0)}%</div>` : '<div class="hint"><span class="spinner"></span> working…</div>'}
-      </div>${s1line}`;
+      </div>`;
     return;
   }
   const options = Object.entries(r.models).map(([k, m]) =>
@@ -327,7 +314,7 @@ function renderCard(s) {
       <div class="cm-row"><button class="btn" id="cm-url-go">Connect</button></div>
       <div class="hint">Saved for this computer only (data/settings), never in git.</div>
     </details>
-  </div>${s1line}`;
+  </div>`;
   const pick = $('model-pick');
   const upd = () => {
     const k = pick.value, m = r.models[k];
