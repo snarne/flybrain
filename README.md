@@ -41,6 +41,47 @@ that can teach it new movements.
   types, trace pathways, activate, record and silence neurons, and score the results against real
   experiments.
 
+## This branch: the robotics failure finder
+
+`robotics/failure-finder` is a side project on the robotics question: before a robot is deployed,
+find the conditions under which its controller fails, check that each failure is real, find what
+causes it, and check whether a recovery controller fixes it without breaking anything else. It uses
+MuJoCo, as the fly does, with two standard robot models from MuJoCo Menagerie (downloaded on first
+use into `.cache/`, not committed):
+
+- **Unitree Go2** quadruped, trotting forwards for 5 s. Baseline: a fixed trot on joint PD control
+  that never looks at the body. Recovery: the same trot plus two reflexes (a foot lands towards the
+  body's drift; the joints soften when they start shaking), the kind of feedback the fly's leg sense
+  organs give. Conditions: foot friction, payload mass and position, motor strength, sensor-to-motor
+  delay, joint sensor noise, a shove (force, direction, time), slope.
+- **Franka Panda** arm, picking a box off the floor and putting it down 30 cm away. Baseline: a
+  scripted pick-and-place from one look at the box. Recovery: the same plus checks (is the box in the
+  hand? did it fall? did it land on target?) with a closer look and a retry. Conditions: where the box
+  is and its rotation, perception errors, box width, mass and friction, grip and arm strength, a shove.
+
+For each robot the finder (`robotics/finder.py`) runs: each condition alone until it fails; random
+variation of all of them around normal; adversarial search (CMA-ES) for the worst failures and for the
+mildest conditions that still fail; then for each distinct failure 5 fresh seeds (reproducible?), each
+changed condition put back to normal in turn (its causes), the failure with everything else normal
+(the minimal case), and the recovery controller (fixed?), plus the recovery controller on the random
+conditions (does it break anything that worked?). Runs where the simulator itself blows up are counted
+apart, never as robot failures.
+
+Run it overnight (quit the Flybrain app first; it uses every core but one):
+
+```
+double-click "Run failure finder.command"        # 8 hours, both robots
+tools/run_robotics.sh find --hours 8
+tools/run_robotics.sh find --robots go2 --quick  # a few minutes, to check it runs
+tools/run_robotics.sh replay go2 0 --recovery    # watch a failure in the MuJoCo viewer
+```
+
+Results are written to `results/failure_finder/`: `report.md` (limits of each condition, the distinct
+failures with their causes, what recovery fixed and broke, charts), and per robot `summary.json`,
+`failures.json` (replayable) and `samples.csv` (every run). They are meant to be committed on this
+branch. The findings are about these models and controllers in simulation (for example, the
+Menagerie gripper's collision shapes), not about the real robots.
+
 ## Setup
 
 ### What you need
@@ -812,6 +853,11 @@ tools/build_senses.py  finds the sensory neurons the world reaches, by side and 
 tools/learn_builtin.py relearns the built-in grooming skill on the connectome
 tools/build_body.py    rebuilds web/data/fly_body.* from the flygym package
 tools/mock_llm.py      a scripted fake model server for testing the agent without a download
+robotics/              the failure finder: assets.py (Menagerie download), space.py, go2.py, panda.py (robots,
+                       controllers, recovery), finder.py (the search), run.py (overnight run, report),
+                       replay.py (MuJoCo viewer), svg.py (charts)
+tools/run_robotics.sh  runs, reports and replays the failure finder with the app's Python environment
+results/               experiment results, committed on the experiment branches
 
 Created on your machine and kept out of git (see .gitignore): .tools/, .cache/ (uv, Python, the BANC
 download), .venv-<profile>/, runtime/ (llama.cpp), models/ (GGUF files), data/ (your conversations,
