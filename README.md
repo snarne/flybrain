@@ -41,6 +41,45 @@ that can teach it new movements.
   types, trace pathways, activate, record and silence neurons, and score the results against real
   experiments.
 
+## This branch: the learned-walking experiment
+
+`experiment/learned-walking` asks whether the connectome's own nerve-cord circuits can make the fly
+step with the hand-built walking model off. Real nervous systems tune themselves without rewiring:
+connections get stronger or weaker, neurons get more or less excitable. So practice may change, per
+cell type (the same setting for all six legs):
+
+- the strength of the strongest connections between the leg premotor interneurons, the leg motor
+  neurons and the forward-walking command neurons (P9, DNp09): synapse counts stay as BANC has them,
+  only their gain changes (x0.05 to x4.5);
+- a steady background input to each of the 48 premotor types (like neuromodulation);
+- a fast (~100 ms) adaptation current per premotor type, which lets neurons fire in bursts, the usual
+  ingredient of a rhythm generator.
+
+Who connects to whom never changes. A trial is 0.5 s standing, then P9 driven at 150 Hz for 2 s, all
+hand-built parts off. It is scored on moving forwards, each leg's joints oscillating at a stepping
+rhythm (2-12 Hz) with a real step's size, the legs keeping a tripod, and standing still before the
+command; hopping, flapping and falling count against it. The search is separable CMA-ES over about
+250 settings, and every 10 generations the best is checked again on fresh noise.
+
+The control runs alongside: the same search on the shuffled wiring (same neurons and synapse counts,
+random partners). If the shuffled wiring learns to walk as well, the result says nothing about the
+connectome. The references are the same trial with the walking model on (how the app walks now) and
+with it off on the untouched wiring (the fly doesn't step).
+
+Run it overnight (quit the Flybrain app first; it uses every core but one):
+
+```
+double-click "Run learned walking.command"          # 8 hours
+tools/experiments/run_overnight.sh learned_walking --hours 8
+tools/experiments/run_overnight.sh learned_walking --quick     # a few minutes, to check it runs
+```
+
+Stop it any time; running it again continues where it left off. Results are written to
+`results/learned_walking/`: `report.md` (the table, charts of the score and of each leg's swing, what
+the best setting changed, and what it means), and per wiring `progress.csv`, `validation.csv`,
+`best.json`, `state.json`. They are meant to be committed on this branch. A negative result (neither
+wiring steps) is a real answer too: it says the hand-built walking model is still needed.
+
 ## Setup
 
 ### What you need
@@ -812,6 +851,9 @@ tools/build_senses.py  finds the sensory neurons the world reaches, by side and 
 tools/learn_builtin.py relearns the built-in grooming skill on the connectome
 tools/build_body.py    rebuilds web/data/fly_body.* from the flygym package
 tools/mock_llm.py      a scripted fake model server for testing the agent without a download
+server/tuning.py       the learned-walking experiment: adjustable leg circuits, the walking score, the search
+tools/experiments/     overnight experiments (learned_walking.py) and their launcher (run_overnight.sh)
+results/               experiment results, committed on the experiment branches
 
 Created on your machine and kept out of git (see .gitignore): .tools/, .cache/ (uv, Python, the BANC
 download), .venv-<profile>/, runtime/ (llama.cpp), models/ (GGUF files), data/ (your conversations,

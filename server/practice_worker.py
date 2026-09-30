@@ -38,6 +38,7 @@ class Sandbox:
         self.w.mb.learning = False          # practice mustn't change what the mushroom body has learned
         self.w.brain.step(1)                # compile the kernel
         self.cfg = None
+        self.circuits = None                # tuning.LegCircuits, when an experiment tunes the leg circuits
 
     def configure(self, cfg):
         """Match the live fly's wiring (variant) and silenced neurons."""
@@ -49,6 +50,7 @@ class Sandbox:
         if v != w.variant or s != getattr(self, "_vseed", 0):
             w.set_variant(v, s)
             self._vseed = s
+            self.circuits = None            # the wiring changed: its leg circuits are found again
         want = set(cfg.get("ablated", []))
         for g in list(w.ablated):
             if g not in want:
@@ -112,9 +114,30 @@ class Sandbox:
         for _ in range(int(round(settle / DT))):
             self.frame()
 
+    def tune_describe(self, req):
+        """The biggest changes a parameter vector makes, by cell type (for the report)."""
+        return {"describe": self.circuits.describe(req["tune"], int(req.get("top", 12)))}
+
+    def tune_setup(self, req):
+        """Find the adjustable leg circuits in the wiring running now (tuning.py)."""
+        import tuning
+        self.circuits = tuning.LegCircuits(self.w, int(req.get("n_types", 48)), int(req.get("n_pairs", 160)),
+                                           int(req.get("min_syn", 30)))
+        rng = self.w.motor.ranges
+        halves = {leg: {d: float(rng[leg][d]["half"]) for d in tuning.DOFS} for leg in tuning.LEGS}
+        cmd = sorted({int(n) for t in tuning.COMMAND_TYPES for n in self.w.neurons_of_type(t)})
+        return {"n": self.circuits.n, "labels": self.circuits.labels(), "x0": self.circuits.x0().tolist(),
+                "command_neurons": cmd, "describe_x0": self.circuits.describe(self.circuits.x0()),
+                "halves": halves, "types": self.circuits.n_types, "pairs": self.circuits.n_pairs}
+
     def trial(self, req):
         t0 = time.time()
         w, b = self.w, self.b
+        if req.get("tune") is not None and self.circuits is None:
+            self.tune_setup(req.get("tune_cfg") or {})      # a restarted copy finds the circuits again
+        if self.circuits is not None:       # tuned leg circuits for this trial, or the connectome as it is
+            self.circuits.apply(w.brain, req.get("tune"))
+        angles = bool(req.get("angles"))
         drivers = req["drivers"]
         bin_s = float(req.get("bin_s", 0.02))
         n_frames = int(round((float(req["duration"]) + float(req.get("tail", 0.4))) / DT))
@@ -125,6 +148,9 @@ class Sandbox:
         keys = list(w.motor.controls)
         rec = {"t": [], "val": {k: [] for k in keys}, "x": [], "y": [], "z": [], "heading": [], "upright": [],
                "feet": [], "air": [], "drive": []}
+        if angles:
+            import tuning
+            rec["ang"] = {leg: {d: [] for d in tuning.DOFS} for leg in tuning.LEGS}
         last = None
         try:
             for f in range(n_frames):
@@ -155,6 +181,10 @@ class Sandbox:
                     rec["heading"].append(round(s["heading"], 4))
                     rec["upright"].append(round(s["upright"], 3))
                     feet = int(sum(s["touch"].values()))
+                    if angles:
+                        for leg, dd in rec["ang"].items():
+                            for d, lst in dd.items():
+                                lst.append(round(s["angle"][(leg, d)], 4))
                 else:
                     p = b.pose
                     rec["x"].append(round(p["x"], 4))
@@ -193,6 +223,10 @@ def main():
             op = req.get("op", "trial")
             if op == "trial":
                 res = sb.trial(req)
+            elif op == "tune_setup":
+                res = sb.tune_setup(req)
+            elif op == "tune_describe":
+                res = sb.tune_describe(req)
             elif op == "ping":
                 res = {}
             else:
